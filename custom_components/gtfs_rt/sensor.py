@@ -185,6 +185,11 @@ class PublicTransportSensor(Entity):
     def name(self):
         return self._name
 
+    @property
+    def unique_id(self):
+        """Return a unique ID for this sensor."""
+        return f"gtfs_rt_{self._route}_{self._stop}_{self._direction}_{self._bus_index}"
+
     def _get_next_services(self):
         return (
             self.data.info.get(self._route, {})

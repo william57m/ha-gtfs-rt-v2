@@ -1,8 +1,7 @@
-trip_update_url: 'https://gtfsrt.api.translink.com.au/api/realtime/SEQ/TripUpdates'
-vehicle_position_url: 'https://gtfsrt.api.translink.com.au/api/realtime/SEQ/VehiclePositions'
-route_delimiter: '-'
+trip_update_url: 'https://gtfsapi.translink.ca/v3/gtfsrealtime?apikey=9AOnwk30j1iY6zEQOZxN'
+vehicle_position_url: 'https://gtfsapi.translink.ca/v3/gtfsposition?apikey=9AOnwk30j1iY6zEQOZxN'
 departures:
-- name: 'Ferny Grove Train'
-  route: BNFG
-  stopid: '600195'
+- name: '84 to Olympic Station'
+  route: '16718'
+  stopid: '12813'
   next_bus_limit: 3
