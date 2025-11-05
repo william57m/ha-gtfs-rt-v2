@@ -1,17 +1,20 @@
 import logging
-from datetime import datetime, timedelta
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Any
-
 import homeassistant.helpers.config_validation as cv
-import homeassistant.util.dt as dt_util
 import requests
 import voluptuous as vol
+
+from datetime import datetime, timedelta
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Any, Tuple
 from google.transit import gtfs_realtime_pb2
 from homeassistant.components.sensor import PLATFORM_SCHEMA
 from homeassistant.const import ATTR_LATITUDE, ATTR_LONGITUDE, CONF_NAME
 from homeassistant.helpers.entity import Entity
 from homeassistant.util import Throttle
+
+from static_gtfs import StaticGTFSProcessor
+from logger_helper import LoggerHelper
+from stop_details import StopDetails
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,66 +40,86 @@ CONF_ICON = "icon"
 CONF_SERVICE_TYPE = "service_type"
 CONF_NEXT_BUS_LIMIT = "next_bus_limit"
 CONF_UPDATE_INTERVAL = "update_interval"
+CONF_STATIC_GTFS_URL = "static_gtfs_url"
+CONF_ENABLE_STATIC_FALLBACK = "enable_static_fallback"
 
 DEFAULT_SERVICE = "Service"
 DEFAULT_ICON = "mdi:bus"
 DEFAULT_DIRECTION = "0"
 DEFAULT_API_KEY_HEADER_NAME = "Authorization"
 DEFAULT_NEXT_BUS_LIMIT = 1
-DEFAULT_UPDATE_INTERVAL = 60  # seconds
-
+DEFAULT_UPDATE_INTERVAL = 60
 
 TIME_STR_FORMAT = "%H:%M"
 
+PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
+    {
+        vol.Required(CONF_TRIP_UPDATE_URL): cv.string,
+        vol.Optional(CONF_API_KEY): cv.string,
+        vol.Optional(CONF_X_API_KEY): cv.string,
+        vol.Optional(
+            CONF_API_KEY_HEADER_NAME,
+            default=DEFAULT_API_KEY_HEADER_NAME,  # type: ignore
+        ): cv.string,
+        vol.Optional(CONF_VEHICLE_POSITION_URL): cv.string,
+        vol.Optional(CONF_ROUTE_DELIMITER): cv.string,
+        vol.Optional(
+            CONF_UPDATE_INTERVAL, default=DEFAULT_UPDATE_INTERVAL
+        ): cv.positive_int,
+        vol.Optional(CONF_STATIC_GTFS_URL): cv.string,
+        vol.Optional(CONF_ENABLE_STATIC_FALLBACK, default=False): cv.boolean,
+        vol.Optional(CONF_DEPARTURES): [
+            {
+                vol.Required(CONF_NAME): cv.string,
+                vol.Required(CONF_STOP_ID): cv.string,
+                vol.Required(CONF_ROUTE): cv.string,
+                vol.Optional(
+                    CONF_DIRECTION_ID,
+                    default=DEFAULT_DIRECTION,  # type: ignore
+                ): cv.string,
+                vol.Optional(
+                    CONF_ICON, default=DEFAULT_ICON  # type: ignore
+                ): cv.string,
+                vol.Optional(
+                    CONF_SERVICE_TYPE, default=DEFAULT_SERVICE  # type: ignore
+                ): cv.string,
+                vol.Optional(
+                    CONF_NEXT_BUS_LIMIT, default=DEFAULT_NEXT_BUS_LIMIT  # type: ignore
+                ): cv.positive_int,
+            }
+        ],
+    }
+)
 
-@dataclass
-class StopDetails:
-    """Data class to store stop arrival information."""
 
-    arrival_time: datetime
-    position: Optional[Any] = None
+def setup_platform(hass, config, add_devices, discovery_info=None):
+    """Get the public transport sensor."""
+    data = PublicTransportData(
+        config.get(CONF_TRIP_UPDATE_URL),
+        config.get(CONF_VEHICLE_POSITION_URL),
+        config.get(CONF_ROUTE_DELIMITER),
+        config.get(CONF_API_KEY),
+        config.get(CONF_X_API_KEY),
+        config.get(CONF_API_KEY_HEADER_NAME),
+        config.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
+        config.get(CONF_STATIC_GTFS_URL),
+        config.get(CONF_ENABLE_STATIC_FALLBACK, False),
+    )
+
+    sensors = SensorFactory.create_sensors_from_config(config, data)
+    add_devices(sensors)
 
 
-@dataclass
-class VehiclePosition:
-    """Data class to store vehicle position information."""
-
-    latitude: float
-    longitude: float
+def due_in_minutes(timestamp):
+    now_local = datetime.now()
+    diff = timestamp - now_local
+    return int(diff.total_seconds() / 60)
 
 
 class GTFSFeedError(Exception):
     """Exception raised when GTFS feed cannot be retrieved."""
 
     pass
-
-
-class LoggerHelper:
-    """Helper class for consistent logging formatting."""
-
-    @staticmethod
-    def log_with_indent(logger_func, data: List[str], indent_level: int) -> None:
-        """Log data with consistent indentation."""
-        indents = "   " * indent_level
-        message = f"{indents}{': '.join(str(x) for x in data)}"
-        logger_func(message)
-
-    @staticmethod
-    def log_info(data: List[str], indent_level: int = 0) -> None:
-        """Log info message with indentation."""
-        LoggerHelper.log_with_indent(_LOGGER.info, data, indent_level)
-
-    @staticmethod
-    def log_error(data: List[str], indent_level: int = 0) -> None:
-        """Log error message with indentation."""
-        LoggerHelper.log_with_indent(_LOGGER.error, data, indent_level)
-
-    @staticmethod
-    def log_debug(data: List[str], indent_level: int = 0) -> None:
-        """Log debug message with indentation (space separated for debug)."""
-        indents = "   " * indent_level
-        message = f"{indents}{' '.join(str(x) for x in data)}"
-        _LOGGER.debug(message)
 
 
 class GTFSDataProcessor:
@@ -121,12 +144,10 @@ class GTFSDataProcessor:
             return processed_id
 
     def extract_stop_time(self, stop) -> int:
-        """Extract stop time from GTFS stop time update."""
         # Use stop arrival time; fall back on departure time if not available
         return stop.arrival.time if stop.arrival.time != 0 else stop.departure.time
 
     def is_future_departure(self, timestamp: int) -> bool:
-        """Check if the departure time is in the future."""
         return due_in_minutes(datetime.fromtimestamp(timestamp)) >= 0
 
 
@@ -152,7 +173,8 @@ class GTFSFeedClient:
                         f"Updating {label} got",
                         str(response.status_code),
                         str(response.content),
-                    ]
+                    ],
+                    logger=_LOGGER,
                 )
                 raise GTFSFeedError(f"Failed to fetch {label}: {response.status_code}")
 
@@ -160,57 +182,15 @@ class GTFSFeedClient:
             return feed.entity
 
         except requests.RequestException as e:
-            LoggerHelper.log_error([f"Network error fetching {label}", str(e)])
+            LoggerHelper.log_error(
+                [f"Network error fetching {label}", str(e)], logger=_LOGGER
+            )
             raise GTFSFeedError(f"Network error: {e}")
         except Exception as e:
-            LoggerHelper.log_error([f"Error parsing {label} feed", str(e)])
+            LoggerHelper.log_error(
+                [f"Error parsing {label} feed", str(e)], logger=_LOGGER
+            )
             raise GTFSFeedError(f"Parse error: {e}")
-
-
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
-    {
-        vol.Required(CONF_TRIP_UPDATE_URL): cv.string,
-        vol.Optional(CONF_API_KEY): cv.string,
-        vol.Optional(CONF_X_API_KEY): cv.string,
-        vol.Optional(
-            CONF_API_KEY_HEADER_NAME,
-            default=DEFAULT_API_KEY_HEADER_NAME,  # type: ignore
-        ): cv.string,
-        vol.Optional(CONF_VEHICLE_POSITION_URL): cv.string,
-        vol.Optional(CONF_ROUTE_DELIMITER): cv.string,
-        vol.Optional(
-            CONF_UPDATE_INTERVAL, default=DEFAULT_UPDATE_INTERVAL
-        ): cv.positive_int,
-        vol.Optional(CONF_DEPARTURES): [
-            {
-                vol.Required(CONF_NAME): cv.string,
-                vol.Required(CONF_STOP_ID): cv.string,
-                vol.Required(CONF_ROUTE): cv.string,
-                vol.Optional(
-                    CONF_DIRECTION_ID,
-                    default=DEFAULT_DIRECTION,  # type: ignore
-                ): cv.string,
-                vol.Optional(
-                    CONF_ICON, default=DEFAULT_ICON  # type: ignore
-                ): cv.string,
-                vol.Optional(
-                    CONF_SERVICE_TYPE, default=DEFAULT_SERVICE  # type: ignore
-                ): cv.string,
-                vol.Optional(
-                    CONF_NEXT_BUS_LIMIT, default=DEFAULT_NEXT_BUS_LIMIT  # type: ignore
-                ): cv.positive_int,
-            }
-        ],
-    }
-)
-
-
-def due_in_minutes(timestamp):
-    """Get the remaining minutes from now until a given datetime object."""
-    # Use local time instead of UTC to match GTFS timestamps which are in local time
-    now_local = datetime.now()
-    diff = timestamp - now_local
-    return int(diff.total_seconds() / 60)
 
 
 class SensorFactory:
@@ -267,22 +247,6 @@ class SensorFactory:
             return f"{base_name} Next"
         else:
             return f"{base_name} Next {bus_index + 1}"
-
-
-def setup_platform(hass, config, add_devices, discovery_info=None):
-    """Get the public transport sensor."""
-    data = PublicTransportData(
-        config.get(CONF_TRIP_UPDATE_URL),
-        config.get(CONF_VEHICLE_POSITION_URL),
-        config.get(CONF_ROUTE_DELIMITER),
-        config.get(CONF_API_KEY),
-        config.get(CONF_X_API_KEY),
-        config.get(CONF_API_KEY_HEADER_NAME),
-        config.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
-    )
-
-    sensors = SensorFactory.create_sensors_from_config(config, data)
-    add_devices(sensors)
 
 
 class PublicTransportSensor(Entity):
@@ -362,12 +326,17 @@ class PublicTransportSensor(Entity):
 
     def _build_base_attributes(self) -> Dict[str, Any]:
         """Build base attributes that are always present."""
+        current_service = self._get_service_at_index(self._bus_index)
+        is_real_time = current_service.is_real_time if current_service else True
+
         return {
             ATTR_DUE_IN: self.state,
             ATTR_STOP_ID: self._stop_id,
             ATTR_ROUTE: self._route,
             ATTR_DIRECTION_ID: self._direction,
             "Bus Index": self._bus_index + 1,  # Human-readable index (1-based)
+            "Is Real-time": is_real_time,
+            "Data Source": "Real-time" if is_real_time else "Static Schedule",
         }
 
     def _build_current_service_attributes(self, service: StopDetails) -> Dict[str, Any]:
@@ -419,6 +388,8 @@ class PublicTransportSensor(Entity):
         self._log_attribute_safely(ATTR_LATITUDE, attrs)
         self._log_attribute_safely(ATTR_LONGITUDE, attrs)
         self._log_attribute_safely(f"Next {self._service_type}", attrs)
+        self._log_attribute_safely("Is Real-time", attrs)
+        self._log_attribute_safely("Data Source", attrs)
 
     def _log_attribute_safely(self, attr_name: str, attrs: Dict[str, Any]) -> None:
         """Log attribute value safely, handling missing keys."""
@@ -438,17 +409,22 @@ class PublicTransportData:
         x_api_key: Optional[str] = None,
         api_key_header: Optional[str] = None,
         update_interval: int = DEFAULT_UPDATE_INTERVAL,
+        static_gtfs_url: Optional[str] = None,
+        enable_static_fallback: bool = False,
     ):
         """Initialize the info object."""
         self._trip_update_url = trip_update_url
         self._vehicle_position_url = vehicle_position_url
         self._update_interval = timedelta(seconds=update_interval)
+        self._static_gtfs_url = static_gtfs_url
+        self._enable_static_fallback = enable_static_fallback
 
         # Initialize helper classes
         self._feed_client = GTFSFeedClient(
             self._build_headers(api_key, x_api_key, api_key_header)
         )
         self._data_processor = GTFSDataProcessor(route_delimiter)
+        self._static_processor = StaticGTFSProcessor(static_gtfs_url)
 
         self.info: Dict[str, Dict[str, Dict[str, List[StopDetails]]]] = {}
 
@@ -478,7 +454,9 @@ class PublicTransportData:
             )
             self._update_route_statuses(vehicle_positions)
         except GTFSFeedError as e:
-            LoggerHelper.log_error([f"Failed to update transit data: {e}"])
+            LoggerHelper.log_error(
+                [f"Failed to update transit data: {e}"], logger=_LOGGER
+            )
 
     def _log_configuration(self) -> None:
         """Log current configuration for debugging."""
@@ -490,6 +468,10 @@ class PublicTransportData:
         LoggerHelper.log_info(["headers", str(self._feed_client.headers)])
         LoggerHelper.log_info(
             ["update_interval", f"{self._update_interval.total_seconds()}s"]
+        )
+        LoggerHelper.log_info(["static_gtfs_url", str(self._static_gtfs_url)])
+        LoggerHelper.log_info(
+            ["enable_static_fallback", str(self._enable_static_fallback)]
         )
 
     def _update_route_statuses(self, vehicle_positions: Dict[str, Any]) -> None:
@@ -507,11 +489,17 @@ class PublicTransportData:
                         entity, departure_times, vehicle_positions
                     )
 
+            # Apply static fallback if enabled
+            if self._enable_static_fallback:
+                self._apply_static_fallback(departure_times)
+
             self._sort_departure_times(departure_times)
             self.info = departure_times
 
         except GTFSFeedError as e:
-            LoggerHelper.log_error([f"Error updating route statuses: {e}"])
+            LoggerHelper.log_error(
+                [f"Error updating route statuses: {e}"], logger=_LOGGER
+            )
 
     def _process_trip_update(
         self, entity: Any, departure_times: Dict, vehicle_positions: Dict[str, Any]
@@ -611,9 +599,55 @@ class PublicTransportData:
             )
 
             details = StopDetails(
-                datetime.fromtimestamp(stop_time), vehicle_positions.get(trip_id)
+                datetime.fromtimestamp(stop_time), vehicle_positions.get(trip_id), True
             )
             departure_times[route_id][direction_id][stop_id].append(details)
+
+    def _apply_static_fallback(self, departure_times: Dict) -> None:
+        """Apply static GTFS fallback for routes with insufficient real-time data."""
+        LoggerHelper.log_info(
+            ["Applying static fallback for routes with insufficient data"],
+            logger=_LOGGER,
+        )
+
+        for route_id in departure_times:
+            for direction_id in departure_times[route_id]:
+                for stop_id in departure_times[route_id][direction_id]:
+                    real_time_services = departure_times[route_id][direction_id][
+                        stop_id
+                    ]
+
+                    # Only apply fallback if we have fewer than 2 real-time departures
+                    if len(real_time_services) < 2:
+                        LoggerHelper.log_info(
+                            [
+                                f"Applying static fallback for route {route_id}, direction {direction_id}, stop {stop_id}",
+                                f"(only {len(real_time_services)} real-time departures)",
+                            ],
+                            1,
+                            logger=_LOGGER,
+                        )
+
+                        static_services = self._static_processor.get_static_departures(
+                            route_id, direction_id, stop_id
+                        )
+
+                        merged_services = (
+                            self._static_processor.merge_real_time_and_static(
+                                real_time_services, static_services
+                            )
+                        )
+
+                        departure_times[route_id][direction_id][
+                            stop_id
+                        ] = merged_services
+
+                        LoggerHelper.log_info(
+                            [
+                                f"Merged services: {len(real_time_services)} real-time + {len(static_services)} static = {len(merged_services)} total"
+                            ],
+                            2,
+                        )
 
     def _sort_departure_times(self, departure_times: Dict) -> None:
         """Sort all departure times by arrival time."""
@@ -655,6 +689,8 @@ class PublicTransportData:
                 positions[vehicle.trip.trip_id] = vehicle.position
 
         except GTFSFeedError as e:
-            LoggerHelper.log_error([f"Error getting vehicle positions: {e}"])
+            LoggerHelper.log_error(
+                [f"Error getting vehicle positions: {e}"], logger=_LOGGER
+            )
 
         return positions

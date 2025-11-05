@@ -2,6 +2,9 @@ trip_update_url: 'https://gtfsrt.api.translink.com.au/api/realtime/SEQ/TripUpdat
 vehicle_position_url: 'https://gtfsrt.api.translink.com.au/api/realtime/SEQ/VehiclePositions'
 route_delimiter: '-'
 update_interval: 60  # Optional: Update interval in seconds (default: 60)
+# Static GTFS fallback configuration (optional)
+static_gtfs_url: 'https://example.com/gtfs.zip'  # Optional: URL to static GTFS feed
+enable_static_fallback: true  # Optional: Enable fallback to static schedules (default: false)
 departures:
   # Single bus sensor (default behavior)
   - name: 'Roma St Train'

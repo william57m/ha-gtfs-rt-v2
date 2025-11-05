@@ -18,11 +18,13 @@ from sensor import (
     CONF_API_KEY_HEADER_NAME,
     CONF_DEPARTURES,
     CONF_DIRECTION_ID,
+    CONF_ENABLE_STATIC_FALLBACK,
     CONF_ICON,
     CONF_NEXT_BUS_LIMIT,
     CONF_ROUTE,
     CONF_ROUTE_DELIMITER,
     CONF_SERVICE_TYPE,
+    CONF_STATIC_GTFS_URL,
     CONF_STOP_ID,
     CONF_TRIP_UPDATE_URL,
     CONF_UPDATE_INTERVAL,
@@ -51,6 +53,8 @@ PLATFORM_SCHEMA = Schema(
         Optional(CONF_VEHICLE_POSITION_URL): str,
         Optional(CONF_ROUTE_DELIMITER): str,
         Optional(CONF_UPDATE_INTERVAL): int,
+        Optional(CONF_STATIC_GTFS_URL): str,
+        Optional(CONF_ENABLE_STATIC_FALLBACK): bool,
         CONF_DEPARTURES: [
             {
                 CONF_NAME: str,
@@ -109,6 +113,8 @@ if __name__ == "__main__":
             configuration.get(CONF_X_API_KEY, None),
             configuration.get(CONF_API_KEY_HEADER_NAME, None),
             configuration.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
+            configuration.get(CONF_STATIC_GTFS_URL),
+            configuration.get(CONF_ENABLE_STATIC_FALLBACK, False),
         )
 
         sensors = []

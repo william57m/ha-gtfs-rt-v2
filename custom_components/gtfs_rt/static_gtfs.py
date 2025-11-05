@@ -1,0 +1,317 @@
+"""Static GTFS schedule data processing module."""
+
+import csv
+import io
+import zipfile
+import logging
+import requests
+
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any
+
+from logger_helper import LoggerHelper
+from stop_details import StopDetails
+
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class StaticGTFSProcessor:
+    """Handles static GTFS schedule data processing."""
+
+    def __init__(self, static_gtfs_url: Optional[str] = None):
+        self.static_gtfs_url = static_gtfs_url
+        self._static_data = {}
+        self._last_fetch_time = None
+        self._cache_duration = timedelta(hours=1)  # Cache GTFS data for 1 hour
+
+    def get_static_departures(
+        self, route_id: str, direction_id: str, stop_id: str
+    ) -> List[StopDetails]:
+        """Get static departure times for the specified route/direction/stop."""
+        if not self.static_gtfs_url:
+            return []
+
+        # Load GTFS data if not cached or if cache is expired
+        if not self._is_data_fresh():
+            try:
+                self._load_gtfs_data()
+            except Exception as e:
+                LoggerHelper.log_error(
+                    [f"Failed to load GTFS data: {e}"], logger=_LOGGER
+                )
+                return self._get_placeholder_departures()
+
+        return self._get_scheduled_departures(route_id, direction_id, stop_id)
+
+    def merge_real_time_and_static(
+        self, real_time_services: List[StopDetails], static_services: List[StopDetails]
+    ) -> List[StopDetails]:
+        """Merge real-time and static services, avoiding conflicts."""
+        if not static_services:
+            return real_time_services
+
+        merged_services = list(real_time_services)
+
+        # Add static services that don't conflict with real-time data
+        for static_service in static_services:
+            # Check if there's a real-time service within 5 minutes of this static time
+            has_conflict = any(
+                abs(
+                    (
+                        rt_service.arrival_time - static_service.arrival_time
+                    ).total_seconds()
+                )
+                < 300
+                for rt_service in real_time_services
+            )
+
+            if not has_conflict:
+                merged_services.append(static_service)
+                LoggerHelper.log_debug(
+                    [
+                        "Added static departure at",
+                        static_service.arrival_time.strftime("%H:%M"),
+                    ],
+                    2,
+                    logger=_LOGGER,
+                )
+            else:
+                LoggerHelper.log_debug(
+                    [
+                        "Skipped static departure at",
+                        static_service.arrival_time.strftime("%H:%M"),
+                        "due to real-time conflict",
+                    ],
+                    2,
+                    logger=_LOGGER,
+                )
+
+        # Sort merged services by arrival time
+        merged_services.sort(key=lambda s: s.arrival_time)
+        return merged_services
+
+    def _is_data_fresh(self) -> bool:
+        """Check if cached GTFS data is still fresh."""
+        if not self._last_fetch_time or not self._static_data:
+            return False
+        return datetime.now() - self._last_fetch_time < self._cache_duration
+
+    def _load_gtfs_data(self) -> None:
+        """Download and parse GTFS zip file."""
+        LoggerHelper.log_info(
+            [f"Loading GTFS data from {self.static_gtfs_url}"], logger=_LOGGER
+        )
+
+        # Download GTFS zip file
+        response = requests.get(self.static_gtfs_url, timeout=30)
+        response.raise_for_status()
+
+        # Parse zip file
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
+            # Load routes.txt
+            routes = self._parse_csv_from_zip(zip_file, "routes.txt")
+            routes_dict = {row["route_id"]: row for row in routes}
+
+            # Load calendar.txt and calendar_dates.txt
+            calendar = self._parse_csv_from_zip(zip_file, "calendar.txt")
+            calendar_dates = self._parse_csv_from_zip(zip_file, "calendar_dates.txt")
+
+            # Load trips.txt
+            trips = self._parse_csv_from_zip(zip_file, "trips.txt")
+            trips_dict = {row["trip_id"]: row for row in trips}
+
+            # Load stop_times.txt
+            stop_times = self._parse_csv_from_zip(zip_file, "stop_times.txt")
+
+            # Load stops.txt
+            stops = self._parse_csv_from_zip(zip_file, "stops.txt")
+            stops_dict = {row["stop_id"]: row for row in stops}
+
+        # Process and organize the data
+        self._static_data = {
+            "routes": routes_dict,
+            "trips": trips_dict,
+            "stops": stops_dict,
+            "calendar": calendar,
+            "calendar_dates": calendar_dates,
+            "stop_times": self._organize_stop_times(stop_times),
+        }
+
+        self._last_fetch_time = datetime.now()
+        LoggerHelper.log_info(
+            [
+                f"GTFS data loaded successfully. Found {len(routes_dict)} routes, {len(trips_dict)} trips, {len(stops_dict)} stops"
+            ],
+            logger=_LOGGER,
+        )
+
+    def _parse_csv_from_zip(
+        self, zip_file: zipfile.ZipFile, filename: str
+    ) -> List[Dict[str, str]]:
+        """Parse a CSV file from within the GTFS zip file."""
+        try:
+            with zip_file.open(filename) as csv_file:
+                content = csv_file.read().decode("utf-8-sig")  # Handle BOM
+                reader = csv.DictReader(io.StringIO(content))
+                return list(reader)
+        except KeyError:
+            LoggerHelper.log_error(
+                [f"File {filename} not found in GTFS zip"], logger=_LOGGER
+            )
+            return []
+
+    def _organize_stop_times(
+        self, stop_times: List[Dict[str, str]]
+    ) -> Dict[str, List[Dict[str, str]]]:
+        """Organize stop times by trip_id for faster lookup."""
+        organized = {}
+        for stop_time in stop_times:
+            trip_id = stop_time["trip_id"]
+            if trip_id not in organized:
+                organized[trip_id] = []
+            organized[trip_id].append(stop_time)
+
+        # Sort stop times by stop_sequence
+        for trip_id in organized:
+            organized[trip_id].sort(key=lambda x: int(x.get("stop_sequence", 0)))
+
+        return organized
+
+    def _get_scheduled_departures(
+        self, route_id: str, direction_id: str, stop_id: str
+    ) -> List[StopDetails]:
+        """Get actual scheduled departures from GTFS data."""
+        if not self._static_data:
+            return self._get_placeholder_departures()
+
+        LoggerHelper.log_info(
+            [
+                f"Getting static departures for route {route_id}, direction {direction_id}, stop {stop_id}"
+            ],
+            logger=_LOGGER,
+        )
+
+        current_time = datetime.now()
+        today_services = self._get_active_service_ids()
+        departures = []
+
+        # Find trips for this route and direction
+        matching_trips = []
+        for trip_id, trip_data in self._static_data["trips"].items():
+            if (
+                trip_data["route_id"] == route_id
+                and trip_data.get("direction_id", "0") == str(direction_id)
+                and trip_data["service_id"] in today_services
+            ):
+                matching_trips.append(trip_id)
+
+        # Get stop times for matching trips
+        for trip_id in matching_trips:
+            if trip_id in self._static_data["stop_times"]:
+                for stop_time in self._static_data["stop_times"][trip_id]:
+                    if stop_time["stop_id"] == stop_id:
+                        departure_time = self._parse_gtfs_time(
+                            stop_time.get("departure_time")
+                            or stop_time.get("arrival_time")
+                        )
+                        if departure_time and departure_time > current_time:
+                            departures.append(
+                                StopDetails(
+                                    arrival_time=departure_time,
+                                    position=None,
+                                    is_real_time=False,
+                                )
+                            )
+
+        # Sort by departure time and return next few departures
+        departures.sort(key=lambda x: x.arrival_time)
+        return departures[:4]  # Return next 4 departures
+
+    def _get_active_service_ids(self) -> List[str]:
+        """Get service IDs that are active today."""
+        if not self._static_data:
+            return []
+
+        today = datetime.now()
+        weekday = today.strftime("%A").lower()
+        date_str = today.strftime("%Y%m%d")
+
+        active_services = []
+
+        # Check calendar.txt for regular service
+        for calendar_entry in self._static_data["calendar"]:
+            start_date = calendar_entry.get("start_date", "")
+            end_date = calendar_entry.get("end_date", "")
+
+            # Check if today is within service period
+            if (
+                start_date <= date_str <= end_date
+                and calendar_entry.get(weekday) == "1"
+            ):
+                active_services.append(calendar_entry["service_id"])
+
+        # Check calendar_dates.txt for exceptions
+        for calendar_date in self._static_data["calendar_dates"]:
+            if calendar_date.get("date") == date_str:
+                service_id = calendar_date["service_id"]
+                exception_type = calendar_date.get("exception_type", "1")
+
+                if exception_type == "1":  # Service added
+                    if service_id not in active_services:
+                        active_services.append(service_id)
+                elif exception_type == "2":  # Service removed
+                    if service_id in active_services:
+                        active_services.remove(service_id)
+
+        return active_services
+
+    def _parse_gtfs_time(self, time_str: Optional[str]) -> Optional[datetime]:
+        """Parse GTFS time string (HH:MM:SS) into datetime object."""
+        if not time_str:
+            return None
+
+        try:
+            # GTFS time can exceed 24 hours (e.g., 25:30:00 for 1:30 AM next day)
+            parts = time_str.split(":")
+            hours = int(parts[0])
+            minutes = int(parts[1])
+            seconds = int(parts[2]) if len(parts) > 2 else 0
+
+            # Calculate the actual datetime
+            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            total_minutes = hours * 60 + minutes
+
+            # Handle times that go past midnight
+            if hours >= 24:
+                total_minutes = total_minutes - (24 * 60)
+                today = today + timedelta(days=1)
+
+            departure_time = today + timedelta(minutes=total_minutes, seconds=seconds)
+            return departure_time
+        except (ValueError, IndexError) as e:
+            LoggerHelper.log_error(
+                [f"Failed to parse GTFS time '{time_str}': {e}"], logger=_LOGGER
+            )
+            return None
+
+    def _get_placeholder_departures(self) -> List[StopDetails]:
+        """Fallback to placeholder departures if GTFS parsing fails."""
+        LoggerHelper.log_info(
+            ["Using placeholder static departures (GTFS parsing failed)"],
+            logger=_LOGGER,
+        )
+
+        static_times = []
+        now = datetime.now()
+
+        # Generate next 4 departures at 15-minute intervals
+        for i in range(4):
+            departure_time = now + timedelta(minutes=15 * (i + 1))
+            static_times.append(
+                StopDetails(
+                    arrival_time=departure_time, position=None, is_real_time=False
+                )
+            )
+
+        return static_times
