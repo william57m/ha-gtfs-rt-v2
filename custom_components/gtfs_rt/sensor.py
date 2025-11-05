@@ -12,9 +12,9 @@ from homeassistant.const import ATTR_LATITUDE, ATTR_LONGITUDE, CONF_NAME
 from homeassistant.helpers.entity import Entity
 from homeassistant.util import Throttle
 
-from static_gtfs import StaticGTFSProcessor
-from logger_helper import LoggerHelper
-from stop_details import StopDetails
+from .static_gtfs import StaticGTFSProcessor
+from .logger_helper import LoggerHelper
+from .stop_details import StopDetails
 
 _LOGGER = logging.getLogger(__name__)
 

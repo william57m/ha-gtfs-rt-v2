@@ -9,8 +9,12 @@ import requests
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 
-from logger_helper import LoggerHelper
-from stop_details import StopDetails
+try:
+    from .logger_helper import LoggerHelper
+    from .stop_details import StopDetails
+except ImportError:
+    from logger_helper import LoggerHelper
+    from stop_details import StopDetails
 
 
 _LOGGER = logging.getLogger(__name__)
