@@ -23,7 +23,7 @@ class StaticGTFSProcessor:
         self.static_gtfs_url = static_gtfs_url
         self._static_data = {}
         self._last_fetch_time = None
-        self._cache_duration = timedelta(hours=1)  # Cache GTFS data for 1 hour
+        self._cache_duration = timedelta(weeks=4)  # Cache GTFS data for 1 month
 
     def get_static_departures(
         self, route_id: str, direction_id: str, stop_id: str
@@ -109,22 +109,17 @@ class StaticGTFSProcessor:
 
         # Parse zip file
         with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
-            # Load routes.txt
             routes = self._parse_csv_from_zip(zip_file, "routes.txt")
             routes_dict = {row["route_id"]: row for row in routes}
 
-            # Load calendar.txt and calendar_dates.txt
             calendar = self._parse_csv_from_zip(zip_file, "calendar.txt")
             calendar_dates = self._parse_csv_from_zip(zip_file, "calendar_dates.txt")
 
-            # Load trips.txt
             trips = self._parse_csv_from_zip(zip_file, "trips.txt")
             trips_dict = {row["trip_id"]: row for row in trips}
 
-            # Load stop_times.txt
             stop_times = self._parse_csv_from_zip(zip_file, "stop_times.txt")
 
-            # Load stops.txt
             stops = self._parse_csv_from_zip(zip_file, "stops.txt")
             stops_dict = {row["stop_id"]: row for row in stops}
 
@@ -184,13 +179,6 @@ class StaticGTFSProcessor:
         """Get actual scheduled departures from GTFS data."""
         if not self._static_data:
             return self._get_placeholder_departures()
-
-        LoggerHelper.log_info(
-            [
-                f"Getting static departures for route {route_id}, direction {direction_id}, stop {stop_id}"
-            ],
-            logger=_LOGGER,
-        )
 
         current_time = datetime.now()
         today_services = self._get_active_service_ids()

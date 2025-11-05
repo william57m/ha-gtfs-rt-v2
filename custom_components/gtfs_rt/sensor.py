@@ -23,8 +23,8 @@ ATTR_ROUTE = "Route"
 ATTR_DIRECTION_ID = "Direction ID"
 ATTR_DUE_IN = "Due in"
 ATTR_DUE_AT = "Due at"
-ATTR_NEXT_UP = "Next Service"
 ATTR_ICON = "Icon"
+ATTR_REAL_TIME = "Real-time"
 
 CONF_API_KEY = "api_key"
 CONF_X_API_KEY = "x_api_key"
@@ -154,8 +154,26 @@ class GTFSDataProcessor:
 class GTFSFeedClient:
     """Handles GTFS feed HTTP requests."""
 
-    def __init__(self, headers: Optional[Dict[str, str]] = None):
-        self.headers = headers or {}
+    def __init__(
+        self,
+        api_key: Optional[str],
+        x_api_key: Optional[str],
+        api_key_header: Optional[str],
+    ):
+        self.headers = self._build_headers(api_key, x_api_key, api_key_header)
+
+    def _build_headers(
+        self,
+        api_key: Optional[str],
+        x_api_key: Optional[str],
+        api_key_header: Optional[str],
+    ) -> Optional[Dict[str, str]]:
+        """Build HTTP headers based on provided API keys."""
+        if api_key is not None and api_key_header is not None:
+            return {api_key_header: api_key}
+        elif x_api_key is not None:
+            return {"x-api-key": x_api_key}
+        return None
 
     def fetch_feed_entities(self, url: str, label: str) -> List[Any]:
         """Fetch and parse GTFS feed entities from URL."""
@@ -241,9 +259,7 @@ class SensorFactory:
     @staticmethod
     def _generate_sensor_name(base_name: str, bus_index: int, total_buses: int) -> str:
         """Generate appropriate sensor name based on bus index."""
-        if total_buses == 1:
-            return base_name
-        elif bus_index == 0:
+        if bus_index == 0:
             return f"{base_name} Next"
         else:
             return f"{base_name} Next {bus_index + 1}"
@@ -311,16 +327,11 @@ class PublicTransportSensor(Entity):
     def extra_state_attributes(self) -> Dict[str, Any]:
         """Return the state attributes."""
         current_service = self._get_service_at_index(self._bus_index)
-        next_service = self._get_service_at_index(self._bus_index + 1)
 
         attrs = self._build_base_attributes()
 
         if current_service:
             attrs.update(self._build_current_service_attributes(current_service))
-
-        attrs[f"Next {self._service_type}"] = (
-            next_service.arrival_time.strftime(TIME_STR_FORMAT) if next_service else "-"
-        )
 
         return attrs
 
@@ -334,9 +345,7 @@ class PublicTransportSensor(Entity):
             ATTR_STOP_ID: self._stop_id,
             ATTR_ROUTE: self._route,
             ATTR_DIRECTION_ID: self._direction,
-            "Bus Index": self._bus_index + 1,  # Human-readable index (1-based)
-            "Is Real-time": is_real_time,
-            "Data Source": "Real-time" if is_real_time else "Static Schedule",
+            ATTR_REAL_TIME: is_real_time,
         }
 
     def _build_current_service_attributes(self, service: StopDetails) -> Dict[str, Any]:
@@ -373,12 +382,10 @@ class PublicTransportSensor(Entity):
         """Log sensor update information for debugging."""
         LoggerHelper.log_info(["Sensor Update:"])
         LoggerHelper.log_info(["Name", self._name], 1)
-        LoggerHelper.log_info(["Bus Index", str(self._bus_index + 1)], 1)
         LoggerHelper.log_info([ATTR_ROUTE, self._route], 1)
         LoggerHelper.log_info([ATTR_STOP_ID, self._stop_id], 1)
         LoggerHelper.log_info([ATTR_DIRECTION_ID, self._direction], 1)
         LoggerHelper.log_info([ATTR_ICON, self._icon], 1)
-        LoggerHelper.log_info(["Service Type", self._service_type], 1)
         LoggerHelper.log_info(["unit_of_measurement", self.unit_of_measurement], 1)
         LoggerHelper.log_info([ATTR_DUE_IN, self.state], 1)
 
@@ -387,9 +394,7 @@ class PublicTransportSensor(Entity):
         self._log_attribute_safely(ATTR_DUE_AT, attrs)
         self._log_attribute_safely(ATTR_LATITUDE, attrs)
         self._log_attribute_safely(ATTR_LONGITUDE, attrs)
-        self._log_attribute_safely(f"Next {self._service_type}", attrs)
-        self._log_attribute_safely("Is Real-time", attrs)
-        self._log_attribute_safely("Data Source", attrs)
+        self._log_attribute_safely(ATTR_REAL_TIME, attrs)
 
     def _log_attribute_safely(self, attr_name: str, attrs: Dict[str, Any]) -> None:
         """Log attribute value safely, handling missing keys."""
@@ -420,29 +425,15 @@ class PublicTransportData:
         self._enable_static_fallback = enable_static_fallback
 
         # Initialize helper classes
-        self._feed_client = GTFSFeedClient(
-            self._build_headers(api_key, x_api_key, api_key_header)
-        )
+        self._feed_client = GTFSFeedClient(api_key, x_api_key, api_key_header)
         self._data_processor = GTFSDataProcessor(route_delimiter)
-        self._static_processor = StaticGTFSProcessor(static_gtfs_url)
+        if self._enable_static_fallback and static_gtfs_url:
+            self._static_processor = StaticGTFSProcessor(static_gtfs_url)
 
         self.info: Dict[str, Dict[str, Dict[str, List[StopDetails]]]] = {}
 
         # Apply throttling decorator to the update method
         self.update = Throttle(self._update_interval)(self._update)
-
-    def _build_headers(
-        self,
-        api_key: Optional[str],
-        x_api_key: Optional[str],
-        api_key_header: Optional[str],
-    ) -> Optional[Dict[str, str]]:
-        """Build HTTP headers based on provided API keys."""
-        if api_key is not None and api_key_header is not None:
-            return {api_key_header: api_key}
-        elif x_api_key is not None:
-            return {"x-api-key": x_api_key}
-        return None
 
     def _update(self) -> None:
         """Update the transit data (internal method with throttling applied)."""
