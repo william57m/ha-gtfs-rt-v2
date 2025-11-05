@@ -1,11 +1,11 @@
 {
     "domain": "gtfs_rt",
     "name": "GTFS-Realtime",
-    "documentation": "https://github.com/mark1foley/ha-gtfs-rt-v2",
-    "issue_tracker": "https://github.com/mark1foley/ha-gtfs-rt-v2/issues",
+    "documentation": "https://github.com/william57m/ha-gtfs-rt-v2",
+    "issue_tracker": "https://github.com/william57m/ha-gtfs-rt-v2/issues",
     "dependencies": [],
     "codeowners": [
-        "@mark1foley"
+        "@william57m"
     ],
     "requirements": [
         "gtfs-realtime-bindings==1.0.0"

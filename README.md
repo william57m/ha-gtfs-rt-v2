@@ -7,7 +7,7 @@ It is based on the excellent work that has been done previously by @zacs and @ph
 
 ## Installation (HACS) - Recommended
 0. Have [HACS](https://hacs.xyz/) installed, this will allow you to easily update
-1. Add `https://github.com/mark1foley/ha-gtfs-rt-v2` as a [custom repository](https://hacs.xyz/docs/faq/custom_repositories/) as Type: Integration
+1. Add `https://github.com/william57m/ha-gtfs-rt-v2` as a [custom repository](https://hacs.xyz/docs/faq/custom_repositories/) as Type: Integration
 2. Click install under "GTFS Realtime", then restart your instance for the installation to take effect.
 
 ## Installation (Manual)
