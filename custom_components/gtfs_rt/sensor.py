@@ -81,7 +81,9 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
 
 def due_in_minutes(timestamp):
     """Get the remaining minutes from now until a given datetime object."""
-    diff = timestamp - dt_util.now().replace(tzinfo=None)
+    # Use local time instead of UTC to match GTFS timestamps which are in local time
+    now_local = datetime.now()
+    diff = timestamp - now_local
     return int(diff.total_seconds() / 60)
 
 
