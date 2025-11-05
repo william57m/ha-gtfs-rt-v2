@@ -1,6 +1,7 @@
 trip_update_url: 'https://gtfsrt.api.translink.com.au/api/realtime/SEQ/TripUpdates'
 vehicle_position_url: 'https://gtfsrt.api.translink.com.au/api/realtime/SEQ/VehiclePositions'
 route_delimiter: '-'
+update_interval: 60  # Optional: Update interval in seconds (default: 60)
 departures:
   # Single bus sensor (default behavior)
   - name: 'Roma St Train'

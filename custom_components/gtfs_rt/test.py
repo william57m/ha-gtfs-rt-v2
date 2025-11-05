@@ -6,6 +6,7 @@ Usage: test.py -f <yaml file> -d INFO|DEBUG { -l <outfile log file> }
 See test_translink.yaml for example
 <output file> is a text file for output
 """
+
 import argparse
 import logging
 import sys
@@ -24,12 +25,14 @@ from sensor import (
     CONF_SERVICE_TYPE,
     CONF_STOP_ID,
     CONF_TRIP_UPDATE_URL,
+    CONF_UPDATE_INTERVAL,
     CONF_VEHICLE_POSITION_URL,
     CONF_X_API_KEY,
     DEFAULT_DIRECTION,
     DEFAULT_ICON,
     DEFAULT_NEXT_BUS_LIMIT,
     DEFAULT_SERVICE,
+    DEFAULT_UPDATE_INTERVAL,
     PublicTransportData,
     PublicTransportSensor,
 )
@@ -47,6 +50,7 @@ PLATFORM_SCHEMA = Schema(
         Optional(CONF_API_KEY_HEADER_NAME): str,
         Optional(CONF_VEHICLE_POSITION_URL): str,
         Optional(CONF_ROUTE_DELIMITER): str,
+        Optional(CONF_UPDATE_INTERVAL): int,
         CONF_DEPARTURES: [
             {
                 CONF_NAME: str,
@@ -63,9 +67,7 @@ PLATFORM_SCHEMA = Schema(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Test script for ha-gtfs-rt-v2"
-    )
+    parser = argparse.ArgumentParser(description="Test script for ha-gtfs-rt-v2")
     parser.add_argument(
         "-f", "--file", dest="file", help="Config file to use", metavar="FILE"
     )
@@ -91,9 +93,7 @@ if __name__ == "__main__":
     if args["log"] is None:
         logging.basicConfig(level=DEBUG_LEVEL)
     else:
-        logging.basicConfig(
-            filename=args["log"], filemode="w", level=DEBUG_LEVEL
-        )
+        logging.basicConfig(filename=args["log"], filemode="w", level=DEBUG_LEVEL)
 
     with open(args["file"], "r") as test_yaml:
         configuration = yaml.safe_load(test_yaml)
@@ -108,22 +108,22 @@ if __name__ == "__main__":
             configuration.get(CONF_API_KEY, None),
             configuration.get(CONF_X_API_KEY, None),
             configuration.get(CONF_API_KEY_HEADER_NAME, None),
+            configuration.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
         )
 
         sensors = []
         for departure in configuration[CONF_DEPARTURES]:
             next_bus_limit = departure.get(CONF_NEXT_BUS_LIMIT, DEFAULT_NEXT_BUS_LIMIT)
-            
+
             _LOGGER.info(
-                "Adding Sensors: Name: {}, route id: {}, direction id: {}, next_bus_limit: {}"
-                .format(
+                "Adding Sensors: Name: {}, route id: {}, direction id: {}, next_bus_limit: {}".format(
                     departure[CONF_NAME],
                     departure[CONF_ROUTE],
                     departure[CONF_STOP_ID],
                     next_bus_limit,
                 )
             )
-            
+
             # Create multiple sensors for each next bus/service
             for bus_index in range(next_bus_limit):
                 sensor_name = departure.get(CONF_NAME)
@@ -132,9 +132,9 @@ if __name__ == "__main__":
                         sensor_name = f"{sensor_name} Next"
                     else:
                         sensor_name = f"{sensor_name} Next {bus_index + 1}"
-                
+
                 _LOGGER.info(f"Creating sensor {bus_index + 1}: {sensor_name}")
-                
+
                 sensors.append(
                     PublicTransportSensor(
                         data,
