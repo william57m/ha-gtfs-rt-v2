@@ -33,11 +33,13 @@ CONF_VEHICLE_POSITION_URL = "vehicle_position_url"
 CONF_ROUTE_DELIMITER = "route_delimiter"
 CONF_ICON = "icon"
 CONF_SERVICE_TYPE = "service_type"
+CONF_NEXT_BUS_LIMIT = "next_bus_limit"
 
 DEFAULT_SERVICE = "Service"
 DEFAULT_ICON = "mdi:bus"
 DEFAULT_DIRECTION = "0"
 DEFAULT_API_KEY_HEADER_NAME = 'Authorization'
+DEFAULT_NEXT_BUS_LIMIT = 1
 
 MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=60)
 TIME_STR_FORMAT = "%H:%M"
@@ -68,6 +70,9 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
                 vol.Optional(
                     CONF_SERVICE_TYPE, default=DEFAULT_SERVICE  # type: ignore
                 ): cv.string,
+                vol.Optional(
+                    CONF_NEXT_BUS_LIMIT, default=DEFAULT_NEXT_BUS_LIMIT  # type: ignore
+                ): cv.positive_int,
             }
         ],
     }
@@ -111,17 +116,29 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
     )
     sensors = []
     for departure in config.get(CONF_DEPARTURES):
-        sensors.append(
-            PublicTransportSensor(
-                data,
-                departure.get(CONF_STOP_ID),
-                departure.get(CONF_ROUTE),
-                departure.get(CONF_DIRECTION_ID),
-                departure.get(CONF_ICON),
-                departure.get(CONF_SERVICE_TYPE),
-                departure.get(CONF_NAME),
+        next_bus_limit = departure.get(CONF_NEXT_BUS_LIMIT, DEFAULT_NEXT_BUS_LIMIT)
+        
+        # Create multiple sensors for each next bus/service
+        for bus_index in range(next_bus_limit):
+            sensor_name = departure.get(CONF_NAME)
+            if next_bus_limit > 1:
+                if bus_index == 0:
+                    sensor_name = f"{sensor_name} Next"
+                else:
+                    sensor_name = f"{sensor_name} Next {bus_index + 1}"
+            
+            sensors.append(
+                PublicTransportSensor(
+                    data,
+                    departure.get(CONF_STOP_ID),
+                    departure.get(CONF_ROUTE),
+                    departure.get(CONF_DIRECTION_ID),
+                    departure.get(CONF_ICON),
+                    departure.get(CONF_SERVICE_TYPE),
+                    sensor_name,
+                    bus_index,  # Add bus index to track which bus this sensor represents
+                )
             )
-        )
 
     add_devices(sensors)
 
@@ -150,7 +167,7 @@ def get_gtfs_feed_entities(url: str, headers, label: str):
 class PublicTransportSensor(Entity):
     """Implementation of a public transport sensor."""
 
-    def __init__(self, data, stop, route, direction, icon, service_type, name):
+    def __init__(self, data, stop, route, direction, icon, service_type, name, bus_index=0):
         """Initialize the sensor."""
         self.data = data
         self._name = name
@@ -159,6 +176,7 @@ class PublicTransportSensor(Entity):
         self._direction = direction
         self._icon = icon
         self._service_type = service_type
+        self._bus_index = bus_index  # Track which bus in the sequence this sensor represents
         self.update()
 
     @property
@@ -177,8 +195,8 @@ class PublicTransportSensor(Entity):
         """Return the state of the sensor."""
         next_services = self._get_next_services()
         return (
-            due_in_minutes(next_services[0].arrival_time)
-            if len(next_services) > 0
+            due_in_minutes(next_services[self._bus_index].arrival_time)
+            if len(next_services) > self._bus_index
             else "-"
         )
 
@@ -186,28 +204,34 @@ class PublicTransportSensor(Entity):
     def extra_state_attributes(self):
         """Return the state attributes."""
         next_services = self._get_next_services()
+        current_service_index = self._bus_index
+        next_service_index = self._bus_index + 1
+        
         ATTR_NEXT_UP = "Next " + self._service_type
         attrs = {
             ATTR_DUE_IN: self.state,
             ATTR_STOP_ID: self._stop,
             ATTR_ROUTE: self._route,
             ATTR_DIRECTION_ID: self._direction,
+            "Bus Index": self._bus_index + 1,  # Human-readable index (1-based)
         }
-        if len(next_services) > 0:
-            attrs[ATTR_DUE_AT] = (
-                next_services[0].arrival_time.strftime(TIME_STR_FORMAT)
-                if len(next_services) > 0
-                else "-"
-            )
-            if next_services[0].position:
-                attrs[ATTR_LATITUDE] = next_services[0].position.latitude
-                attrs[ATTR_LONGITUDE] = next_services[0].position.longitude
-        if len(next_services) > 1:
-            attrs[ATTR_NEXT_UP] = (
-                next_services[1].arrival_time.strftime(TIME_STR_FORMAT)
-                if len(next_services) > 1
-                else "-"
-            )
+        
+        # Current service information
+        if len(next_services) > current_service_index:
+            current_service = next_services[current_service_index]
+            attrs[ATTR_DUE_AT] = current_service.arrival_time.strftime(TIME_STR_FORMAT)
+            
+            if current_service.position:
+                attrs[ATTR_LATITUDE] = current_service.position.latitude
+                attrs[ATTR_LONGITUDE] = current_service.position.longitude
+        
+        # Next service information (for this specific sensor)
+        if len(next_services) > next_service_index:
+            next_service = next_services[next_service_index]
+            attrs[ATTR_NEXT_UP] = next_service.arrival_time.strftime(TIME_STR_FORMAT)
+        else:
+            attrs[ATTR_NEXT_UP] = "-"
+            
         return attrs
 
     @property
@@ -228,6 +252,7 @@ class PublicTransportSensor(Entity):
         self.data.update()
         log_info(["Sensor Update:"], 0)
         log_info(["Name", self._name], 1)
+        log_info(["Bus Index", self._bus_index + 1], 1)
         log_info([ATTR_ROUTE, self._route], 1)
         log_info([ATTR_STOP_ID, self._stop], 1)
         log_info([ATTR_DIRECTION_ID, self._direction], 1)

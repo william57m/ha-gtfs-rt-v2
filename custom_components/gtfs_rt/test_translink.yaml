@@ -5,3 +5,4 @@ departures:
 - name: 'Ferny Grove Train'
   route: BNFG
   stopid: '600195'
+  next_bus_limit: 3

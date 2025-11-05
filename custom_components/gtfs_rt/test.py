@@ -18,6 +18,7 @@ from sensor import (
     CONF_DEPARTURES,
     CONF_DIRECTION_ID,
     CONF_ICON,
+    CONF_NEXT_BUS_LIMIT,
     CONF_ROUTE,
     CONF_ROUTE_DELIMITER,
     CONF_SERVICE_TYPE,
@@ -27,6 +28,7 @@ from sensor import (
     CONF_X_API_KEY,
     DEFAULT_DIRECTION,
     DEFAULT_ICON,
+    DEFAULT_NEXT_BUS_LIMIT,
     DEFAULT_SERVICE,
     PublicTransportData,
     PublicTransportSensor,
@@ -53,6 +55,7 @@ PLATFORM_SCHEMA = Schema(
                 Optional(CONF_DIRECTION_ID): str,
                 Optional(CONF_SERVICE_TYPE): str,
                 Optional(CONF_ICON): str,
+                Optional(CONF_NEXT_BUS_LIMIT): int,
             }
         ],
     }
@@ -109,25 +112,41 @@ if __name__ == "__main__":
 
         sensors = []
         for departure in configuration[CONF_DEPARTURES]:
+            next_bus_limit = departure.get(CONF_NEXT_BUS_LIMIT, DEFAULT_NEXT_BUS_LIMIT)
+            
             _LOGGER.info(
-                "Adding Sensor: Name: {}, route id: {}, direction id: {}"
+                "Adding Sensors: Name: {}, route id: {}, direction id: {}, next_bus_limit: {}"
                 .format(
                     departure[CONF_NAME],
                     departure[CONF_ROUTE],
                     departure[CONF_STOP_ID],
+                    next_bus_limit,
                 )
             )
-            sensors.append(
-                PublicTransportSensor(
-                    data,
-                    departure.get(CONF_STOP_ID),
-                    departure.get(CONF_ROUTE),
-                    departure.get(CONF_DIRECTION_ID, DEFAULT_DIRECTION),
-                    departure.get(CONF_ICON, DEFAULT_ICON),
-                    departure.get(CONF_SERVICE_TYPE, DEFAULT_SERVICE),
-                    departure.get(CONF_NAME),
+            
+            # Create multiple sensors for each next bus/service
+            for bus_index in range(next_bus_limit):
+                sensor_name = departure.get(CONF_NAME)
+                if next_bus_limit > 1:
+                    if bus_index == 0:
+                        sensor_name = f"{sensor_name} Next"
+                    else:
+                        sensor_name = f"{sensor_name} Next {bus_index + 1}"
+                
+                _LOGGER.info(f"Creating sensor {bus_index + 1}: {sensor_name}")
+                
+                sensors.append(
+                    PublicTransportSensor(
+                        data,
+                        departure.get(CONF_STOP_ID),
+                        departure.get(CONF_ROUTE),
+                        departure.get(CONF_DIRECTION_ID, DEFAULT_DIRECTION),
+                        departure.get(CONF_ICON, DEFAULT_ICON),
+                        departure.get(CONF_SERVICE_TYPE, DEFAULT_SERVICE),
+                        sensor_name,
+                        bus_index,  # Add bus index
+                    )
                 )
-            )
 
     except SchemaError as se:
         logging.info("Input file configuration invalid: {}".format(se))
