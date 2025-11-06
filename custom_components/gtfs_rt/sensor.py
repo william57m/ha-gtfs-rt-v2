@@ -112,7 +112,7 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
     )
 
     # Start background loading after initialization
-    hass.loop.call_soon_threadsafe(lambda: data.start_load_static_gtfs_data())
+    data.start_load_static_gtfs_data(hass)
 
     sensors = SensorFactory.create_sensors_from_config(config, data)
     add_entities(sensors)
@@ -451,10 +451,12 @@ class PublicTransportData:
 
         self._log_configuration()
 
-    def start_load_static_gtfs_data(self) -> None:
+    def start_load_static_gtfs_data(self, hass) -> None:
         """Start background loading of static GTFS data if available."""
         if self._static_processor:
-            self._static_processor.load_gtfs_data()
+            hass.loop.call_soon_threadsafe(
+                lambda: self._static_processor.load_gtfs_data()
+            )
 
     def _update(self) -> None:
         """Update the transit data (internal method with throttling applied)."""
