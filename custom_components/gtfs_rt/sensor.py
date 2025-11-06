@@ -441,6 +441,8 @@ class PublicTransportData:
         self._data_processor = GTFSDataProcessor(route_delimiter)
         if self._enable_static_fallback and static_gtfs_url:
             self._static_processor = StaticGTFSProcessor(static_gtfs_url)
+        else:
+            self._static_processor = None
 
         self.info: Dict[str, Dict[str, Dict[str, List[StopDetails]]]] = {}
 
