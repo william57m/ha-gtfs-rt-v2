@@ -455,7 +455,7 @@ class PublicTransportData:
         """Start background loading of static GTFS data if available."""
         if self._static_processor:
             hass.loop.call_soon_threadsafe(
-                lambda: self._static_processor.load_gtfs_data()
+                lambda: hass.async_create_task(self._static_processor.load_gtfs_data())
             )
 
     def _update(self) -> None:
