@@ -184,7 +184,7 @@ class GTFSFeedClient:
             response = requests.get(url, headers=self.headers, timeout=20)
 
             if response.status_code == 200:
-                LoggerHelper.log_info(
+                LoggerHelper.log_debug(
                     [f"Successfully updated {label}", str(response.status_code)]
                 )
             else:
@@ -387,14 +387,14 @@ class PublicTransportSensor(Entity):
 
     def _log_sensor_update(self) -> None:
         """Log sensor update information for debugging."""
-        LoggerHelper.log_info(["Sensor Update:"])
-        LoggerHelper.log_info(["Name", self._name], 1)
-        LoggerHelper.log_info([ATTR_ROUTE, self._route], 1)
-        LoggerHelper.log_info([ATTR_STOP_ID, self._stop_id], 1)
-        LoggerHelper.log_info([ATTR_DIRECTION_ID, self._direction], 1)
-        LoggerHelper.log_info([ATTR_ICON, self._icon], 1)
-        LoggerHelper.log_info(["unit_of_measurement", self.unit_of_measurement], 1)
-        LoggerHelper.log_info([ATTR_DUE_IN, self.state], 1)
+        LoggerHelper.log_debug(["Sensor Update:"])
+        LoggerHelper.log_debug(["Name", self._name], 1)
+        LoggerHelper.log_debug([ATTR_ROUTE, self._route], 1)
+        LoggerHelper.log_debug([ATTR_STOP_ID, self._stop_id], 1)
+        LoggerHelper.log_debug([ATTR_DIRECTION_ID, self._direction], 1)
+        LoggerHelper.log_debug([ATTR_ICON, self._icon], 1)
+        LoggerHelper.log_debug(["unit_of_measurement", self.unit_of_measurement], 1)
+        LoggerHelper.log_debug([ATTR_DUE_IN, self.state], 1)
 
         # Log additional attributes with error handling
         attrs = self.extra_state_attributes
@@ -406,7 +406,7 @@ class PublicTransportSensor(Entity):
     def _log_attribute_safely(self, attr_name: str, attrs: Dict[str, Any]) -> None:
         """Log attribute value safely, handling missing keys."""
         value = attrs.get(attr_name, "not defined")
-        LoggerHelper.log_info([attr_name, str(value)], 1)
+        LoggerHelper.log_debug([attr_name, str(value)], 1)
 
 
 class PublicTransportData:
@@ -461,17 +461,17 @@ class PublicTransportData:
 
     def _log_configuration(self) -> None:
         """Log current configuration for debugging."""
-        LoggerHelper.log_info(["trip_update_url", self._trip_update_url])
-        LoggerHelper.log_info(["vehicle_position_url", self._vehicle_position_url])
-        LoggerHelper.log_info(
+        LoggerHelper.log_debug(["trip_update_url", self._trip_update_url])
+        LoggerHelper.log_debug(["vehicle_position_url", self._vehicle_position_url])
+        LoggerHelper.log_debug(
             ["route_delimiter", str(self._data_processor.route_delimiter)]
         )
-        LoggerHelper.log_info(["headers", str(self._feed_client.headers)])
-        LoggerHelper.log_info(
+        LoggerHelper.log_debug(["headers", str(self._feed_client.headers)])
+        LoggerHelper.log_debug(
             ["update_interval", f"{self._update_interval.total_seconds()}s"]
         )
-        LoggerHelper.log_info(["static_gtfs_url", str(self._static_gtfs_url)])
-        LoggerHelper.log_info(
+        LoggerHelper.log_debug(["static_gtfs_url", str(self._static_gtfs_url)])
+        LoggerHelper.log_debug(
             ["enable_static_fallback", str(self._enable_static_fallback)]
         )
 
@@ -615,7 +615,7 @@ class PublicTransportData:
 
     def _apply_static_fallback(self, departure_times: Dict) -> None:
         """Apply static GTFS fallback for routes with insufficient real-time data."""
-        LoggerHelper.log_info(
+        LoggerHelper.log_debug(
             ["Applying static fallback for routes with insufficient data"],
             logger=_LOGGER,
         )
@@ -642,7 +642,7 @@ class PublicTransportData:
                             stop_id
                         ] = merged_services
 
-                        LoggerHelper.log_info(
+                        LoggerHelper.log_debug(
                             [
                                 f"Merged services: {len(real_time_services)} real-time + {len(static_services)} static = {len(merged_services)} total"
                             ],

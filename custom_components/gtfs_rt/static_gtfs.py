@@ -104,7 +104,7 @@ class StaticGTFSProcessor:
 
     def _load_gtfs_data(self) -> None:
         """Download and parse GTFS zip file."""
-        LoggerHelper.log_info(
+        LoggerHelper.log_debug(
             [f"Loading GTFS data from {self.static_gtfs_url}"], logger=_LOGGER
         )
 
@@ -139,7 +139,7 @@ class StaticGTFSProcessor:
         }
 
         self._last_fetch_time = datetime.now()
-        LoggerHelper.log_info(
+        LoggerHelper.log_debug(
             [
                 f"GTFS data loaded successfully. Found {len(routes_dict)} routes, {len(trips_dict)} trips, {len(stops_dict)} stops"
             ],
