@@ -26,8 +26,9 @@ class StaticGTFSProcessor:
     def __init__(self, static_gtfs_url: Optional[str] = None):
         self.static_gtfs_url = static_gtfs_url
         self._static_data = {}
+        self._static_data_cache_duration = timedelta(weeks=4)
+        self._departures = {}
         self._last_fetch_time = None
-        self._cache_duration = timedelta(weeks=4)  # Cache GTFS data for 1 month
 
     def get_static_departures(
         self, route_id: str, direction_id: str, stop_id: str
@@ -44,7 +45,7 @@ class StaticGTFSProcessor:
                 LoggerHelper.log_error(
                     [f"Failed to load GTFS data: {e}"], logger=_LOGGER
                 )
-                return self._get_placeholder_departures()
+                return []
 
         return self._get_scheduled_departures(route_id, direction_id, stop_id)
 
@@ -99,7 +100,7 @@ class StaticGTFSProcessor:
         """Check if cached GTFS data is still fresh."""
         if not self._last_fetch_time or not self._static_data:
             return False
-        return datetime.now() - self._last_fetch_time < self._cache_duration
+        return datetime.now() - self._last_fetch_time < self._static_data_cache_duration
 
     def _load_gtfs_data(self) -> None:
         """Download and parse GTFS zip file."""
@@ -177,18 +178,12 @@ class StaticGTFSProcessor:
 
         return organized
 
-    def _get_scheduled_departures(
+    def _cache_scheduled_departures(
         self, route_id: str, direction_id: str, stop_id: str
     ) -> List[StopDetails]:
-        """Get actual scheduled departures from GTFS data."""
-        if not self._static_data:
-            return self._get_placeholder_departures()
 
-        current_time = datetime.now()
+        # Find trips for this route and direction today
         today_services = self._get_active_service_ids()
-        departures = []
-
-        # Find trips for this route and direction
         matching_trips = []
         for trip_id, trip_data in self._static_data["trips"].items():
             if (
@@ -199,6 +194,7 @@ class StaticGTFSProcessor:
                 matching_trips.append(trip_id)
 
         # Get stop times for matching trips
+        departures = []
         for trip_id in matching_trips:
             if trip_id in self._static_data["stop_times"]:
                 for stop_time in self._static_data["stop_times"][trip_id]:
@@ -207,18 +203,33 @@ class StaticGTFSProcessor:
                             stop_time.get("departure_time")
                             or stop_time.get("arrival_time")
                         )
-                        if departure_time and departure_time > current_time:
-                            departures.append(
-                                StopDetails(
-                                    arrival_time=departure_time,
-                                    position=None,
-                                    is_real_time=False,
-                                )
+                        departures.append(
+                            StopDetails(
+                                arrival_time=departure_time,
+                                position=None,
+                                is_real_time=False,
                             )
+                        )
+        self._departures[(route_id, direction_id, stop_id)] = departures
+
+    def _get_scheduled_departures(
+        self, route_id: str, direction_id: str, stop_id: str
+    ) -> List[StopDetails]:
+        """Get actual scheduled departures from GTFS data."""
+
+        if (route_id, direction_id, stop_id) not in self._departures:
+            self._cache_scheduled_departures(route_id, direction_id, stop_id)
+
+        current_time = datetime.now()
+
+        departures = []
+        for departure in self._departures[(route_id, direction_id, stop_id)]:
+            if departure.arrival_time > current_time:
+                departures.append(departure)
 
         # Sort by departure time and return next few departures
         departures.sort(key=lambda x: x.arrival_time)
-        return departures[:4]  # Return next 4 departures
+        return departures[:10]
 
     def _get_active_service_ids(self) -> List[str]:
         """Get service IDs that are active today."""
@@ -286,24 +297,3 @@ class StaticGTFSProcessor:
                 [f"Failed to parse GTFS time '{time_str}': {e}"], logger=_LOGGER
             )
             return None
-
-    def _get_placeholder_departures(self) -> List[StopDetails]:
-        """Fallback to placeholder departures if GTFS parsing fails."""
-        LoggerHelper.log_info(
-            ["Using placeholder static departures (GTFS parsing failed)"],
-            logger=_LOGGER,
-        )
-
-        static_times = []
-        now = datetime.now()
-
-        # Generate next 4 departures at 15-minute intervals
-        for i in range(4):
-            departure_time = now + timedelta(minutes=15 * (i + 1))
-            static_times.append(
-                StopDetails(
-                    arrival_time=departure_time, position=None, is_real_time=False
-                )
-            )
-
-        return static_times

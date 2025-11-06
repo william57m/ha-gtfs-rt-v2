@@ -97,7 +97,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
 )
 
 
-def setup_platform(hass, config, add_devices, discovery_info=None):
+def setup_platform(hass, config, add_entities, discovery_info=None):
     """Get the public transport sensor."""
     data = PublicTransportData(
         config.get(CONF_TRIP_UPDATE_URL),
@@ -112,7 +112,7 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
     )
 
     sensors = SensorFactory.create_sensors_from_config(config, data)
-    add_devices(sensors)
+    add_entities(sensors)
 
 
 def due_in_minutes(timestamp):
@@ -143,9 +143,6 @@ class GTFSDataProcessor:
             return original_route_id
         else:
             processed_id = route_id_split[0]
-            LoggerHelper.log_debug(
-                ["Feed Route ID", original_route_id, "changed to", processed_id], 1
-            )
             return processed_id
 
     def extract_stop_time(self, stop) -> int:
@@ -256,6 +253,7 @@ class SensorFactory:
                     service_type=departure.get(CONF_SERVICE_TYPE),
                     name=sensor_name,
                     bus_index=bus_index,
+                    next_bus_limit=next_bus_limit,
                 )
             )
 
@@ -283,6 +281,7 @@ class PublicTransportSensor(Entity):
         service_type: str,
         name: str,
         bus_index: int = 0,
+        next_bus_limit: int = DEFAULT_NEXT_BUS_LIMIT,
     ):
         """Initialize the sensor."""
         self.data = data
@@ -293,6 +292,9 @@ class PublicTransportSensor(Entity):
         self._icon = icon
         self._service_type = service_type
         self._bus_index = bus_index
+
+        data.add_route_to_process(route, direction, stop_id)
+        data.set_next_bus_limit(next_bus_limit)
         self.update()
 
     @property
@@ -428,6 +430,8 @@ class PublicTransportData:
         self._update_interval = timedelta(seconds=update_interval)
         self._static_gtfs_url = static_gtfs_url
         self._enable_static_fallback = enable_static_fallback
+        self._next_bus_limit = DEFAULT_NEXT_BUS_LIMIT
+        self._routes_to_process: Dict[str, Dict[str, Dict[str]]] = {}
 
         # Initialize helper classes
         self._feed_client = GTFSFeedClient(api_key, x_api_key, api_key_header)
@@ -440,9 +444,10 @@ class PublicTransportData:
         # Apply throttling decorator to the update method
         self.update = Throttle(self._update_interval)(self._update)
 
+        self._log_configuration()
+
     def _update(self) -> None:
         """Update the transit data (internal method with throttling applied)."""
-        self._log_configuration()
 
         try:
             vehicle_positions = (
@@ -502,6 +507,7 @@ class PublicTransportData:
     ) -> None:
         """Process a single trip update entity."""
         trip = entity.trip_update.trip
+        should_process = trip.route_id in self._routes_to_process
 
         # Log trip information
         LoggerHelper.log_debug(
@@ -516,9 +522,14 @@ class PublicTransportData:
                 trip.start_time,
                 "Start Date:",
                 trip.start_date,
+                "Processed:",
+                should_process,
             ],
             1,
         )
+
+        if not should_process:
+            return
 
         # Process route ID
         route_id = self._data_processor.process_route_id(trip.route_id)
@@ -536,14 +547,17 @@ class PublicTransportData:
 
         # Process each stop in the trip update
         for stop in entity.trip_update.stop_time_update:
-            self._process_stop_update(
-                stop,
-                route_id,
-                direction_id,
-                trip.trip_id,
-                departure_times,
-                vehicle_positions,
-            )
+            if stop.stop_id in self._routes_to_process[trip.route_id].get(
+                direction_id, {}
+            ):
+                self._process_stop_update(
+                    stop,
+                    route_id,
+                    direction_id,
+                    trip.trip_id,
+                    departure_times,
+                    vehicle_positions,
+                )
 
     def _process_stop_update(
         self,
@@ -613,21 +627,11 @@ class PublicTransportData:
                         stop_id
                     ]
 
-                    # Only apply fallback if we have fewer than 2 real-time departures
-                    if len(real_time_services) < 2:
-                        LoggerHelper.log_info(
-                            [
-                                f"Applying static fallback for route {route_id}, direction {direction_id}, stop {stop_id}",
-                                f"(only {len(real_time_services)} real-time departures)",
-                            ],
-                            1,
-                            logger=_LOGGER,
-                        )
-
+                    # Only apply fallback if we have fewer than real-time departures than next_bus_limit
+                    if len(real_time_services) < self._next_bus_limit:
                         static_services = self._static_processor.get_static_departures(
                             route_id, direction_id, stop_id
                         )
-
                         merged_services = (
                             self._static_processor.merge_real_time_and_static(
                                 real_time_services, static_services
@@ -690,3 +694,18 @@ class PublicTransportData:
             )
 
         return positions
+
+    def add_route_to_process(
+        self, route_id: str, direction_id: str, stop_id: str
+    ) -> None:
+        """Add a route/direction/stop combination to the list to process."""
+        if route_id not in self._routes_to_process:
+            self._routes_to_process[route_id] = {}
+        if direction_id not in self._routes_to_process[route_id]:
+            self._routes_to_process[route_id][direction_id] = {}
+        if stop_id not in self._routes_to_process[route_id][direction_id]:
+            self._routes_to_process[route_id][direction_id][stop_id] = True
+
+    def set_next_bus_limit(self, limit: int) -> None:
+        """Set the next bus limit for static fallback processing."""
+        self._next_bus_limit = limit
