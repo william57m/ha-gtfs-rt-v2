@@ -4,6 +4,8 @@ import csv
 import io
 import zipfile
 import logging
+import asyncio
+import aiohttp
 import requests
 
 from datetime import datetime, timedelta
@@ -23,8 +25,8 @@ _LOGGER = logging.getLogger(__name__)
 class StaticGTFSProcessor:
     """Handles static GTFS schedule data processing."""
 
-    def __init__(self, static_gtfs_url: Optional[str] = None):
-        self.static_gtfs_url = static_gtfs_url
+    def __init__(self, static_gtfs_url: str):
+        self._static_gtfs_url = static_gtfs_url
         self._static_data = {}
         self._static_data_cache_duration = timedelta(weeks=4)
         self._departures = {}
@@ -33,21 +35,19 @@ class StaticGTFSProcessor:
     def get_static_departures(
         self, route_id: str, direction_id: str, stop_id: str
     ) -> List[StopDetails]:
-        """Get static departure times for the specified route/direction/stop."""
-        if not self.static_gtfs_url:
-            return []
+        """Get static departure times synchronously (fallback for non-async contexts)."""
 
-        # Load GTFS data if not cached or if cache is expired
-        if not self._is_data_fresh():
-            try:
-                self._load_gtfs_data()
-            except Exception as e:
-                LoggerHelper.log_error(
-                    [f"Failed to load GTFS data: {e}"], logger=_LOGGER
-                )
-                return []
+        # Only return data if it's already loaded, don't block to load it
+        if self.has_data():
+            return self._get_scheduled_departures(route_id, direction_id, stop_id)
 
-        return self._get_scheduled_departures(route_id, direction_id, stop_id)
+        # If no data is available, log a message but don't block
+        LoggerHelper.log_debug(
+            ["Static GTFS data not available in sync context, skipping"],
+            logger=_LOGGER,
+        )
+
+        return []
 
     def merge_real_time_and_static(
         self, real_time_services: List[StopDetails], static_services: List[StopDetails]
@@ -103,18 +103,46 @@ class StaticGTFSProcessor:
             return False
         return datetime.now() - self._last_fetch_time < self._static_data_cache_duration
 
-    def _load_gtfs_data(self) -> None:
-        """Download and parse GTFS zip file."""
+    def has_data(self) -> bool:
+        """Check if GTFS data is available."""
+        return bool(self._static_data)
+
+    async def load_gtfs_data(self) -> None:
+        """Download and parse GTFS zip file asynchronously."""
         LoggerHelper.log_debug(
-            [f"Loading GTFS data from {self.static_gtfs_url}"], logger=_LOGGER
+            [f"Loading GTFS data asynchronously from {self._static_gtfs_url}"],
+            logger=_LOGGER,
         )
 
-        # Download GTFS zip file
-        response = requests.get(self.static_gtfs_url, timeout=30)
-        response.raise_for_status()
+        try:
+            # Download GTFS zip file using aiohttp
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(self._static_gtfs_url) as response:
+                    response.raise_for_status()
+                    content = await response.read()
 
-        # Parse zip file
-        with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
+            # Parse zip file (CPU-bound work, but relatively fast)
+            await asyncio.get_event_loop().run_in_executor(
+                None, self._parse_gtfs_content, content
+            )
+
+            self._last_fetch_time = datetime.now()
+            LoggerHelper.log_debug(
+                [
+                    f"GTFS data loaded asynchronously. Found {len(self._static_data.get('routes', {}))} routes"
+                ],
+                logger=_LOGGER,
+            )
+        except Exception as e:
+            LoggerHelper.log_error(
+                [f"Failed to load GTFS data asynchronously: {e}"], logger=_LOGGER
+            )
+            raise
+
+    def _parse_gtfs_content(self, content: bytes) -> None:
+        """Parse GTFS zip content (CPU-bound work for executor)."""
+        with zipfile.ZipFile(io.BytesIO(content)) as zip_file:
             routes = self._parse_csv_from_zip(zip_file, "routes.txt")
             routes_dict = {row["route_id"]: row for row in routes}
 
@@ -138,14 +166,6 @@ class StaticGTFSProcessor:
             "calendar_dates": calendar_dates,
             "stop_times": self._organize_stop_times(stop_times),
         }
-
-        self._last_fetch_time = datetime.now()
-        LoggerHelper.log_debug(
-            [
-                f"GTFS data loaded successfully. Found {len(routes_dict)} routes, {len(trips_dict)} trips, {len(stops_dict)} stops"
-            ],
-            logger=_LOGGER,
-        )
 
     def _parse_csv_from_zip(
         self, zip_file: zipfile.ZipFile, filename: str

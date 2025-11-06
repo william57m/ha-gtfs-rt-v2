@@ -150,7 +150,7 @@ if __name__ == "__main__":
                         departure.get(CONF_ICON, DEFAULT_ICON),
                         departure.get(CONF_SERVICE_TYPE, DEFAULT_SERVICE),
                         sensor_name,
-                        bus_index,  # Add bus index
+                        bus_index,
                         departure.get(CONF_NEXT_BUS_LIMIT, DEFAULT_NEXT_BUS_LIMIT),
                     )
                 )

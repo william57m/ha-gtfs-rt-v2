@@ -111,6 +111,9 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
         config.get(CONF_ENABLE_STATIC_FALLBACK, False),
     )
 
+    # Start background loading after initialization
+    hass.async_create_task(data.start_load_static_gtfs_data())
+
     sensors = SensorFactory.create_sensors_from_config(config, data)
     add_entities(sensors)
 
@@ -387,14 +390,14 @@ class PublicTransportSensor(Entity):
 
     def _log_sensor_update(self) -> None:
         """Log sensor update information for debugging."""
-        LoggerHelper.log_debug(["Sensor Update:"])
-        LoggerHelper.log_debug(["Name", self._name], 1)
-        LoggerHelper.log_debug([ATTR_ROUTE, self._route], 1)
-        LoggerHelper.log_debug([ATTR_STOP_ID, self._stop_id], 1)
-        LoggerHelper.log_debug([ATTR_DIRECTION_ID, self._direction], 1)
-        LoggerHelper.log_debug([ATTR_ICON, self._icon], 1)
-        LoggerHelper.log_debug(["unit_of_measurement", self.unit_of_measurement], 1)
-        LoggerHelper.log_debug([ATTR_DUE_IN, self.state], 1)
+        LoggerHelper.log_info(["Sensor Update:"])
+        LoggerHelper.log_info(["Name", self._name], 1)
+        LoggerHelper.log_info([ATTR_ROUTE, self._route], 1)
+        LoggerHelper.log_info([ATTR_STOP_ID, self._stop_id], 1)
+        LoggerHelper.log_info([ATTR_DIRECTION_ID, self._direction], 1)
+        LoggerHelper.log_info([ATTR_ICON, self._icon], 1)
+        LoggerHelper.log_info(["unit_of_measurement", self.unit_of_measurement], 1)
+        LoggerHelper.log_info([ATTR_DUE_IN, self.state], 1)
 
         # Log additional attributes with error handling
         attrs = self.extra_state_attributes
@@ -406,7 +409,7 @@ class PublicTransportSensor(Entity):
     def _log_attribute_safely(self, attr_name: str, attrs: Dict[str, Any]) -> None:
         """Log attribute value safely, handling missing keys."""
         value = attrs.get(attr_name, "not defined")
-        LoggerHelper.log_debug([attr_name, str(value)], 1)
+        LoggerHelper.log_info([attr_name, str(value)], 1)
 
 
 class PublicTransportData:
@@ -445,6 +448,11 @@ class PublicTransportData:
         self.update = Throttle(self._update_interval)(self._update)
 
         self._log_configuration()
+
+    def start_load_static_gtfs_data(self) -> None:
+        """Start background loading of static GTFS data if available."""
+        if self._static_processor:
+            self._static_processor.load_gtfs_data()
 
     def _update(self) -> None:
         """Update the transit data (internal method with throttling applied)."""
