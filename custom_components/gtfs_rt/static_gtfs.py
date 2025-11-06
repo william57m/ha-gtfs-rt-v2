@@ -6,7 +6,6 @@ import zipfile
 import logging
 import asyncio
 import aiohttp
-import requests
 
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
@@ -109,7 +108,7 @@ class StaticGTFSProcessor:
 
     async def load_gtfs_data(self) -> None:
         """Download and parse GTFS zip file asynchronously."""
-        LoggerHelper.log_debug(
+        LoggerHelper.log_info(
             [f"Loading GTFS data asynchronously from {self._static_gtfs_url}"],
             logger=_LOGGER,
         )
@@ -128,7 +127,7 @@ class StaticGTFSProcessor:
             )
 
             self._last_fetch_time = datetime.now()
-            LoggerHelper.log_debug(
+            LoggerHelper.log_info(
                 [
                     f"GTFS data loaded asynchronously. Found {len(self._static_data.get('routes', {}))} routes"
                 ],
@@ -203,7 +202,7 @@ class StaticGTFSProcessor:
         self, route_id: str, direction_id: str, stop_id: str
     ) -> List[StopDetails]:
 
-        LoggerHelper.log_debug("_cache_scheduled_departures")
+        LoggerHelper.log_info("_cache_scheduled_departures")
         # Find trips for this route and direction today
         today_services = self._get_active_service_ids()
         matching_trips = []
@@ -252,6 +251,8 @@ class StaticGTFSProcessor:
 
         # Sort by departure time and return next few departures
         departures.sort(key=lambda x: x.arrival_time)
+        LoggerHelper.log_info("departures")
+        LoggerHelper.log_info(departures)
         return departures[:10]
 
     def _get_active_service_ids(self) -> List[str]:
