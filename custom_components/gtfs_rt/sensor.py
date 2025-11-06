@@ -112,7 +112,7 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
     )
 
     # Start background loading after initialization
-    hass.async_create_task(data.start_load_static_gtfs_data())
+    hass.loop.call_soon_threadsafe(lambda: data.start_load_static_gtfs_data())
 
     sensors = SensorFactory.create_sensors_from_config(config, data)
     add_entities(sensors)
