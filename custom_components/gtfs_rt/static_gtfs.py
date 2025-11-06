@@ -56,6 +56,7 @@ class StaticGTFSProcessor:
         if not static_services:
             return real_time_services
 
+        LoggerHelper.log_debug("merge_real_time_and_static")
         merged_services = list(real_time_services)
 
         # Add static services that don't conflict with real-time data
@@ -182,6 +183,7 @@ class StaticGTFSProcessor:
         self, route_id: str, direction_id: str, stop_id: str
     ) -> List[StopDetails]:
 
+        LoggerHelper.log_debug("_cache_scheduled_departures")
         # Find trips for this route and direction today
         today_services = self._get_active_service_ids()
         matching_trips = []
@@ -211,6 +213,7 @@ class StaticGTFSProcessor:
                             )
                         )
         self._departures[(route_id, direction_id, stop_id)] = departures
+        LoggerHelper.log_debug("end _cache_scheduled_departures")
 
     def _get_scheduled_departures(
         self, route_id: str, direction_id: str, stop_id: str
