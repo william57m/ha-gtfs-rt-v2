@@ -42,7 +42,7 @@ class StaticGTFSProcessor:
 
         # If no data is available, log a message but don't block
         LoggerHelper.log_debug(
-            ["Static GTFS data not available in sync context, skipping"],
+            ["Static GTFS data not available yet, skipping"],
             logger=_LOGGER,
         )
 
