@@ -115,7 +115,15 @@ async def async_setup_platform(hass, config, add_entities, discovery_info=None):
     add_entities(sensors)
 
     # Fetch static GTFS data
-    hass.async_create_task(data.load_gtfs_static_data())
+    async def handle_load_static(call: ServiceCall):
+        LoggerHelper.log_info("Service called: loading GTFS static data.")
+        try:
+            data.load_gtfs_static_data()
+            LoggerHelper.log_info("GTFS static data loaded successfully.")
+        except Exception as e:
+            LoggerHelper.log_error("Error loading GTFS data: %s", e)
+
+    hass.services.async_register("sensor", "load_gtfs_static_data", handle_load_static)
 
 
 def due_in_minutes(timestamp):
