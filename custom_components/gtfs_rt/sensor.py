@@ -180,11 +180,11 @@ class GTFSFeedClient:
             return {"x-api-key": x_api_key}
         return None
 
-    async def fetch_feed_entities(self, url: str, label: str) -> List[Any]:
+    def fetch_feed_entities(self, url: str, label: str) -> List[Any]:
         """Fetch and parse GTFS feed entities from URL."""
         try:
             feed = gtfs_realtime_pb2.FeedMessage()
-            response = await requests.get(url, headers=self.headers, timeout=20)
+            response = requests.get(url, headers=self.headers, timeout=20)
 
             if response.status_code == 200:
                 LoggerHelper.log_debug(
@@ -434,16 +434,14 @@ class PublicTransportData:
         if self._static_processor:
             await self._static_processor.load_gtfs_data()
 
-    async def update(self) -> None:
+    def update(self) -> None:
         """Update the transit data (internal method with throttling applied)."""
 
         try:
             vehicle_positions = (
-                await self._get_vehicle_positions()
-                if self._vehicle_position_url
-                else {}
+                self._get_vehicle_positions() if self._vehicle_position_url else {}
             )
-            await self._update_route_statuses(vehicle_positions)
+            self._update_route_statuses(vehicle_positions)
         except GTFSFeedError as e:
             LoggerHelper.log_error(
                 [f"Failed to update transit data: {e}"], logger=_LOGGER
@@ -465,12 +463,12 @@ class PublicTransportData:
             ["enable_static_fallback", str(self._enable_static_fallback)]
         )
 
-    async def _update_route_statuses(self, vehicle_positions: Dict[str, Any]) -> None:
+    def _update_route_statuses(self, vehicle_positions: Dict[str, Any]) -> None:
         """Get the latest trip update data and process it."""
         departure_times: Dict[str, Dict[str, Dict[str, List[StopDetails]]]] = {}
 
         try:
-            feed_entities = await self._feed_client.fetch_feed_entities(
+            feed_entities = self._feed_client.fetch_feed_entities(
                 self._trip_update_url, "trip data"
             )
 
@@ -648,12 +646,12 @@ class PublicTransportData:
                         key=lambda t: t.arrival_time
                     )
 
-    async def _get_vehicle_positions(self) -> Dict[str, Any]:
+    def _get_vehicle_positions(self) -> Dict[str, Any]:
         """Get vehicle positions from the GTFS feed."""
         positions = {}
 
         try:
-            feed_entities = await self._feed_client.fetch_feed_entities(
+            feed_entities = self._feed_client.fetch_feed_entities(
                 self._vehicle_position_url, "vehicle positions"
             )
 
