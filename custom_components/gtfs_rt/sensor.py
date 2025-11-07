@@ -257,6 +257,9 @@ class SensorFactory:
                     name=sensor_name,
                     bus_index=bus_index,
                     next_bus_limit=next_bus_limit,
+                    update_interval=departure.get(
+                        CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
+                    ),
                 )
             )
 
@@ -284,6 +287,7 @@ class PublicTransportSensor(SensorEntity):
         name: str,
         bus_index: int = 0,
         next_bus_limit: int = DEFAULT_NEXT_BUS_LIMIT,
+        update_interval: int = DEFAULT_UPDATE_INTERVAL,
     ):
         self._data = data
         self._name = name
@@ -293,6 +297,7 @@ class PublicTransportSensor(SensorEntity):
         self._icon = icon
         self._service_type = service_type
         self._bus_index = bus_index
+        self._update_interval = timedelta(seconds=update_interval)
 
         self._data.add_route_to_process(route, direction, stop_id)
         self._data.set_next_bus_limit(next_bus_limit)
