@@ -7,10 +7,10 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Any, Tuple
 from google.transit import gtfs_realtime_pb2
-from homeassistant.components.sensor import PLATFORM_SCHEMA
+from homeassistant.components.sensor import PLATFORM_SCHEMA, SensorEntity
 from homeassistant.const import ATTR_LATITUDE, ATTR_LONGITUDE, CONF_NAME
 from homeassistant.helpers.entity import Entity
-from homeassistant.util import Throttle
+from homeassistant.helpers.event import async_track_time_interval
 
 try:
     from .static_gtfs import StaticGTFSProcessor
@@ -98,7 +98,6 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
 
 
 async def async_setup_platform(hass, config, add_entities, discovery_info=None):
-    """Get the public transport sensor."""
     data = PublicTransportData(
         config.get(CONF_TRIP_UPDATE_URL),
         config.get(CONF_VEHICLE_POSITION_URL),
@@ -111,9 +110,10 @@ async def async_setup_platform(hass, config, add_entities, discovery_info=None):
         config.get(CONF_ENABLE_STATIC_FALLBACK, False),
     )
 
-    # Start background loading after initialization
-    await data.start_load_static_gtfs_data()
+    # Fetch static GTFS data
+    await data.load_gtfs_static_data()
 
+    # Create sensors
     sensors = SensorFactory.create_sensors_from_config(config, data)
     add_entities(sensors)
 
@@ -180,11 +180,11 @@ class GTFSFeedClient:
             return {"x-api-key": x_api_key}
         return None
 
-    def fetch_feed_entities(self, url: str, label: str) -> List[Any]:
+    async def fetch_feed_entities(self, url: str, label: str) -> List[Any]:
         """Fetch and parse GTFS feed entities from URL."""
         try:
             feed = gtfs_realtime_pb2.FeedMessage()
-            response = requests.get(url, headers=self.headers, timeout=20)
+            response = await requests.get(url, headers=self.headers, timeout=20)
 
             if response.status_code == 200:
                 LoggerHelper.log_debug(
@@ -271,8 +271,7 @@ class SensorFactory:
             return f"{base_name} Next {bus_index + 1}"
 
 
-class PublicTransportSensor(Entity):
-    """Implementation of a public transport sensor."""
+class PublicTransportSensor(SensorEntity):
 
     def __init__(
         self,
@@ -286,8 +285,7 @@ class PublicTransportSensor(Entity):
         bus_index: int = 0,
         next_bus_limit: int = DEFAULT_NEXT_BUS_LIMIT,
     ):
-        """Initialize the sensor."""
-        self.data = data
+        self._data = data
         self._name = name
         self._stop_id = stop_id
         self._route = route
@@ -296,38 +294,29 @@ class PublicTransportSensor(Entity):
         self._service_type = service_type
         self._bus_index = bus_index
 
-        data.add_route_to_process(route, direction, stop_id)
-        data.set_next_bus_limit(next_bus_limit)
-        self.update()
+        self._data.add_route_to_process(route, direction, stop_id)
+        self._data.set_next_bus_limit(next_bus_limit)
 
     @property
     def name(self) -> str:
-        """Return the name of the sensor."""
         return self._name
 
     @property
     def unique_id(self) -> str:
-        """Return a unique ID for this sensor."""
         return (
             f"gtfs_rt_{self._route}_{self._stop_id}_{self._direction}_{self._bus_index}"
         )
 
-    def _get_next_services(self) -> List[StopDetails]:
-        """Get the next services for this sensor's route/stop/direction."""
-        return (
-            self.data.info.get(self._route, {})
+    def _get_service_at_index(self, index: int) -> Optional[StopDetails]:
+        next_services = (
+            self._data.info.get(self._route, {})
             .get(self._direction, {})
             .get(self._stop_id, [])
         )
-
-    def _get_service_at_index(self, index: int) -> Optional[StopDetails]:
-        """Get service at specific index, if available."""
-        next_services = self._get_next_services()
         return next_services[index] if len(next_services) > index else None
 
     @property
     def state(self) -> str:
-        """Return the state of the sensor (minutes until arrival)."""
         current_service = self._get_service_at_index(self._bus_index)
         if current_service:
             return str(due_in_minutes(current_service.arrival_time))
@@ -335,22 +324,10 @@ class PublicTransportSensor(Entity):
 
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
-        """Return the state attributes."""
-        current_service = self._get_service_at_index(self._bus_index)
-
-        attrs = self._build_base_attributes()
-
-        if current_service:
-            attrs.update(self._build_current_service_attributes(current_service))
-
-        return attrs
-
-    def _build_base_attributes(self) -> Dict[str, Any]:
-        """Build base attributes that are always present."""
         current_service = self._get_service_at_index(self._bus_index)
         is_real_time = current_service.is_real_time if current_service else True
 
-        return {
+        attrs = {
             ATTR_DUE_IN: self.state,
             ATTR_STOP_ID: self._stop_id,
             ATTR_ROUTE: self._route,
@@ -358,38 +335,37 @@ class PublicTransportSensor(Entity):
             ATTR_REAL_TIME: is_real_time,
         }
 
-    def _build_current_service_attributes(self, service: StopDetails) -> Dict[str, Any]:
-        """Build attributes for the current service."""
-        attrs = {ATTR_DUE_AT: service.arrival_time.strftime(TIME_STR_FORMAT)}
+        if current_service:
+            attrs.update(
+                {ATTR_DUE_AT: current_service.arrival_time.strftime(TIME_STR_FORMAT)}
+            )
 
-        if service.position:
-            attrs[ATTR_LATITUDE] = service.position.latitude
-            attrs[ATTR_LONGITUDE] = service.position.longitude
+            if current_service.position:
+                attrs[ATTR_LATITUDE] = current_service.position.latitude
+                attrs[ATTR_LONGITUDE] = current_service.position.longitude
 
         return attrs
 
     @property
     def unit_of_measurement(self) -> str:
-        """Return the unit this state is expressed in."""
         return "min"
 
     @property
     def icon(self) -> str:
-        """Return the icon for the sensor."""
         return self._icon
 
     @property
     def service_type(self) -> str:
-        """Return the service type."""
         return self._service_type
 
-    def update(self) -> None:
-        """Get the latest data and update the states."""
-        self.data.update()
+    async def async_update(self) -> None:
+        await self._data.update()
         self._log_sensor_update()
 
+    async def async_added_to_hass(self):
+        async_track_time_interval(self.hass, self.async_update, self._update_interval)
+
     def _log_sensor_update(self) -> None:
-        """Log sensor update information for debugging."""
         LoggerHelper.log_info(["Sensor Update:"])
         LoggerHelper.log_info(["Name", self._name], 1)
         LoggerHelper.log_info([ATTR_ROUTE, self._route], 1)
@@ -407,7 +383,6 @@ class PublicTransportSensor(Entity):
         self._log_attribute_safely(ATTR_REAL_TIME, attrs)
 
     def _log_attribute_safely(self, attr_name: str, attrs: Dict[str, Any]) -> None:
-        """Log attribute value safely, handling missing keys."""
         value = attrs.get(attr_name, "not defined")
         LoggerHelper.log_info([attr_name, str(value)], 1)
 
@@ -446,25 +421,24 @@ class PublicTransportData:
 
         self.info: Dict[str, Dict[str, Dict[str, List[StopDetails]]]] = {}
 
-        # Apply throttling decorator to the update method
-        self.update = Throttle(self._update_interval)(self._update)
-
         self._log_configuration()
 
-    async def start_load_static_gtfs_data(self) -> None:
-        """Start background loading of static GTFS data if available."""
+    async def load_gtfs_static_data(self) -> None:
+        """Load static GTFS data if available."""
 
         if self._static_processor:
             await self._static_processor.load_gtfs_data()
 
-    def _update(self) -> None:
+    async def update(self) -> None:
         """Update the transit data (internal method with throttling applied)."""
 
         try:
             vehicle_positions = (
-                self._get_vehicle_positions() if self._vehicle_position_url else {}
+                await self._get_vehicle_positions()
+                if self._vehicle_position_url
+                else {}
             )
-            self._update_route_statuses(vehicle_positions)
+            await self._update_route_statuses(vehicle_positions)
         except GTFSFeedError as e:
             LoggerHelper.log_error(
                 [f"Failed to update transit data: {e}"], logger=_LOGGER
@@ -486,12 +460,12 @@ class PublicTransportData:
             ["enable_static_fallback", str(self._enable_static_fallback)]
         )
 
-    def _update_route_statuses(self, vehicle_positions: Dict[str, Any]) -> None:
+    async def _update_route_statuses(self, vehicle_positions: Dict[str, Any]) -> None:
         """Get the latest trip update data and process it."""
         departure_times: Dict[str, Dict[str, Dict[str, List[StopDetails]]]] = {}
 
         try:
-            feed_entities = self._feed_client.fetch_feed_entities(
+            feed_entities = await self._feed_client.fetch_feed_entities(
                 self._trip_update_url, "trip data"
             )
 
@@ -669,12 +643,12 @@ class PublicTransportData:
                         key=lambda t: t.arrival_time
                     )
 
-    def _get_vehicle_positions(self) -> Dict[str, Any]:
+    async def _get_vehicle_positions(self) -> Dict[str, Any]:
         """Get vehicle positions from the GTFS feed."""
         positions = {}
 
         try:
-            feed_entities = self._feed_client.fetch_feed_entities(
+            feed_entities = await self._feed_client.fetch_feed_entities(
                 self._vehicle_position_url, "vehicle positions"
             )
 
