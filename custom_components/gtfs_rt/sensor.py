@@ -97,7 +97,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
 )
 
 
-async def setup_platform(hass, config, add_entities, discovery_info=None):
+async def async_setup_platform(hass, config, add_entities, discovery_info=None):
     """Get the public transport sensor."""
     data = PublicTransportData(
         config.get(CONF_TRIP_UPDATE_URL),
@@ -116,8 +116,6 @@ async def setup_platform(hass, config, add_entities, discovery_info=None):
 
     sensors = SensorFactory.create_sensors_from_config(config, data)
     add_entities(sensors)
-
-    return True
 
 
 def due_in_minutes(timestamp):
