@@ -48,7 +48,7 @@ With the configuration variables:
 
 ## Screenshot
 
-![screenshot](GTFS-RT-V2.JPG)
+![screenshot](screenshot.png)
 
 ## Troubleshooting
 

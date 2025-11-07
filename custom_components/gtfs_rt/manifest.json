@@ -3,7 +3,6 @@
     "name": "GTFS Realtime",
     "codeowners": ["@william57m"],
     "iot_class": "cloud_polling",
-    "integration_type": "entity",
     "dependencies": [],
     "requirements": ["gtfs-realtime-bindings==1.0.0"],
     "documentation": "https://github.com/william57m/ha-gtfs-rt-v2",

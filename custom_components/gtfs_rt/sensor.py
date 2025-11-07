@@ -256,9 +256,6 @@ class PublicTransportSensor(SensorEntity):
         self._data.update()
         self._log_sensor_update()
 
-    async def async_added_to_hass(self):
-        async_track_time_interval(self.hass, self.update, self._update_interval)
-
     def _log_sensor_update(self) -> None:
         LoggerHelper.log_info(["Sensor Update:"])
         LoggerHelper.log_info(["Name", self._name], 1)
