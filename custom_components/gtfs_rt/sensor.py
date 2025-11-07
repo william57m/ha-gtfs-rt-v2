@@ -110,12 +110,12 @@ async def async_setup_platform(hass, config, add_entities, discovery_info=None):
         config.get(CONF_ENABLE_STATIC_FALLBACK, False),
     )
 
-    # Fetch static GTFS data
-    await data.load_gtfs_static_data()
-
     # Create sensors
     sensors = SensorFactory.create_sensors_from_config(config, data)
     add_entities(sensors)
+
+    # Fetch static GTFS data
+    hass.async_create_task(data.load_gtfs_static_data())
 
 
 def due_in_minutes(timestamp):
@@ -479,8 +479,8 @@ class PublicTransportData:
                     )
 
             # Apply static fallback if enabled
-            # if self._enable_static_fallback:
-            #     self._apply_static_fallback(departure_times)
+            if self._enable_static_fallback:
+                self._apply_static_fallback(departure_times)
 
             self._sort_departure_times(departure_times)
             self.info = departure_times
