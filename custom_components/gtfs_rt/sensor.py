@@ -1,69 +1,55 @@
 import logging
 import homeassistant.helpers.config_validation as cv
-import requests
 import voluptuous as vol
 
 from datetime import datetime, timedelta
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Any, Tuple
-from google.transit import gtfs_realtime_pb2
 from homeassistant.components.sensor import PLATFORM_SCHEMA, SensorEntity
 from homeassistant.const import ATTR_LATITUDE, ATTR_LONGITUDE, CONF_NAME
-from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.event import async_track_time_interval
+from typing import Dict, List, Optional, Any
 
-try:
-    from .static_gtfs import StaticGTFSProcessor
-    from .logger_helper import LoggerHelper
-    from .stop_details import StopDetails
-except ImportError:
-    from static_gtfs import StaticGTFSProcessor
-    from logger_helper import LoggerHelper
-    from stop_details import StopDetails
+from .gtfs_static import StaticGTFSProcessor
+from .gtfs import GTFSFeedClient, GTFSDataProcessor, GTFSFeedError, due_in_minutes
+from .logger_helper import LoggerHelper
+from .stop_details import StopDetails
+from .const import (
+    ATTR_STOP_ID,
+    ATTR_ROUTE,
+    ATTR_DIRECTION_ID,
+    ATTR_DUE_IN,
+    ATTR_DUE_AT,
+    ATTR_ICON,
+    ATTR_REAL_TIME,
+    CONF_API_KEY,
+    CONF_API_KEY_HEADER_NAME,
+    CONF_STOP_ID,
+    CONF_ROUTE,
+    CONF_DIRECTION_ID,
+    CONF_DEPARTURES,
+    CONF_TRIP_UPDATE_URL,
+    CONF_VEHICLE_POSITION_URL,
+    CONF_ROUTE_DELIMITER,
+    CONF_ICON,
+    CONF_SERVICE_TYPE,
+    CONF_NEXT_BUS_LIMIT,
+    CONF_UPDATE_INTERVAL,
+    CONF_STATIC_GTFS_URL,
+    CONF_ENABLE_STATIC_FALLBACK,
+    DEFAULT_SERVICE,
+    DEFAULT_ICON,
+    DEFAULT_DIRECTION,
+    DEFAULT_API_KEY_HEADER_NAME,
+    DEFAULT_NEXT_BUS_LIMIT,
+    DEFAULT_UPDATE_INTERVAL,
+    TIME_STR_FORMAT,
+)
 
 _LOGGER = logging.getLogger(__name__)
-
-DOMAIN = "gtfs_rt"
-
-ATTR_STOP_ID = "Stop ID"
-ATTR_ROUTE = "Route"
-ATTR_DIRECTION_ID = "Direction ID"
-ATTR_DUE_IN = "Due in"
-ATTR_DUE_AT = "Due at"
-ATTR_ICON = "Icon"
-ATTR_REAL_TIME = "Real-time"
-
-CONF_API_KEY = "api_key"
-CONF_X_API_KEY = "x_api_key"
-CONF_API_KEY_HEADER_NAME = "api_key_header"
-CONF_STOP_ID = "stopid"
-CONF_ROUTE = "route"
-CONF_DIRECTION_ID = "directionid"
-CONF_DEPARTURES = "departures"
-CONF_TRIP_UPDATE_URL = "trip_update_url"
-CONF_VEHICLE_POSITION_URL = "vehicle_position_url"
-CONF_ROUTE_DELIMITER = "route_delimiter"
-CONF_ICON = "icon"
-CONF_SERVICE_TYPE = "service_type"
-CONF_NEXT_BUS_LIMIT = "next_bus_limit"
-CONF_UPDATE_INTERVAL = "update_interval"
-CONF_STATIC_GTFS_URL = "static_gtfs_url"
-CONF_ENABLE_STATIC_FALLBACK = "enable_static_fallback"
-
-DEFAULT_SERVICE = "Service"
-DEFAULT_ICON = "mdi:bus"
-DEFAULT_DIRECTION = "0"
-DEFAULT_API_KEY_HEADER_NAME = "Authorization"
-DEFAULT_NEXT_BUS_LIMIT = 1
-DEFAULT_UPDATE_INTERVAL = 60
-
-TIME_STR_FORMAT = "%H:%M"
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
         vol.Required(CONF_TRIP_UPDATE_URL): cv.string,
         vol.Optional(CONF_API_KEY): cv.string,
-        vol.Optional(CONF_X_API_KEY): cv.string,
         vol.Optional(
             CONF_API_KEY_HEADER_NAME,
             default=DEFAULT_API_KEY_HEADER_NAME,  # type: ignore
@@ -97,133 +83,6 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         ],
     }
 )
-
-
-async def async_setup_platform(hass, config, add_entities, discovery_info=None):
-    data = PublicTransportData(
-        config.get(CONF_TRIP_UPDATE_URL),
-        config.get(CONF_VEHICLE_POSITION_URL),
-        config.get(CONF_ROUTE_DELIMITER),
-        config.get(CONF_API_KEY),
-        config.get(CONF_X_API_KEY),
-        config.get(CONF_API_KEY_HEADER_NAME),
-        config.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
-        config.get(CONF_STATIC_GTFS_URL),
-        config.get(CONF_ENABLE_STATIC_FALLBACK, False),
-    )
-
-    # Create sensors
-    sensors = SensorFactory.create_sensors_from_config(config, data)
-    add_entities(sensors)
-
-    # Fetch static GTFS data
-    async def handle_load_static(call):
-        LoggerHelper.log_info("Service called: loading GTFS static data.")
-        try:
-            data.load_gtfs_static_data()
-            LoggerHelper.log_info("GTFS static data loaded successfully.")
-        except Exception as e:
-            LoggerHelper.log_error("Error loading GTFS data: %s", e)
-
-    hass.services.async_register(DOMAIN, "load_gtfs_static_data", handle_load_static)
-
-
-def due_in_minutes(timestamp):
-    now_local = datetime.now()
-    diff = timestamp - now_local
-    return int(diff.total_seconds() / 60)
-
-
-class GTFSFeedError(Exception):
-    """Exception raised when GTFS feed cannot be retrieved."""
-
-    pass
-
-
-class GTFSDataProcessor:
-    """Handles GTFS feed data processing and parsing."""
-
-    def __init__(self, route_delimiter: Optional[str] = None):
-        self.route_delimiter = route_delimiter
-
-    def process_route_id(self, original_route_id: str) -> str:
-        """Process route ID based on delimiter configuration."""
-        if self.route_delimiter is None:
-            return original_route_id
-
-        route_id_split = original_route_id.split(self.route_delimiter)
-        if route_id_split[0] == self.route_delimiter:
-            return original_route_id
-        else:
-            processed_id = route_id_split[0]
-            return processed_id
-
-    def extract_stop_time(self, stop) -> int:
-        # Use stop arrival time; fall back on departure time if not available
-        return stop.arrival.time if stop.arrival.time != 0 else stop.departure.time
-
-    def is_future_departure(self, timestamp: int) -> bool:
-        return due_in_minutes(datetime.fromtimestamp(timestamp)) >= 0
-
-
-class GTFSFeedClient:
-    """Handles GTFS feed HTTP requests."""
-
-    def __init__(
-        self,
-        api_key: Optional[str],
-        x_api_key: Optional[str],
-        api_key_header: Optional[str],
-    ):
-        self.headers = self._build_headers(api_key, x_api_key, api_key_header)
-
-    def _build_headers(
-        self,
-        api_key: Optional[str],
-        x_api_key: Optional[str],
-        api_key_header: Optional[str],
-    ) -> Optional[Dict[str, str]]:
-        """Build HTTP headers based on provided API keys."""
-        if api_key is not None and api_key_header is not None:
-            return {api_key_header: api_key}
-        elif x_api_key is not None:
-            return {"x-api-key": x_api_key}
-        return None
-
-    def fetch_feed_entities(self, url: str, label: str) -> List[Any]:
-        """Fetch and parse GTFS feed entities from URL."""
-        try:
-            feed = gtfs_realtime_pb2.FeedMessage()
-            response = requests.get(url, headers=self.headers, timeout=20)
-
-            if response.status_code == 200:
-                LoggerHelper.log_debug(
-                    [f"Successfully updated {label}", str(response.status_code)]
-                )
-            else:
-                LoggerHelper.log_error(
-                    [
-                        f"Updating {label} got",
-                        str(response.status_code),
-                        str(response.content),
-                    ],
-                    logger=_LOGGER,
-                )
-                raise GTFSFeedError(f"Failed to fetch {label}: {response.status_code}")
-
-            feed.ParseFromString(response.content)
-            return feed.entity
-
-        except requests.RequestException as e:
-            LoggerHelper.log_error(
-                [f"Network error fetching {label}", str(e)], logger=_LOGGER
-            )
-            raise GTFSFeedError(f"Network error: {e}")
-        except Exception as e:
-            LoggerHelper.log_error(
-                [f"Error parsing {label} feed", str(e)], logger=_LOGGER
-            )
-            raise GTFSFeedError(f"Parse error: {e}")
 
 
 class SensorFactory:
@@ -411,7 +270,6 @@ class PublicTransportData:
         vehicle_position_url: str = "",
         route_delimiter: Optional[str] = None,
         api_key: Optional[str] = None,
-        x_api_key: Optional[str] = None,
         api_key_header: Optional[str] = None,
         update_interval: int = DEFAULT_UPDATE_INTERVAL,
         static_gtfs_url: Optional[str] = None,
@@ -427,7 +285,7 @@ class PublicTransportData:
         self._routes_to_process: Dict[str, Dict[str, Dict[str]]] = {}
 
         # Initialize helper classes
-        self._feed_client = GTFSFeedClient(api_key, x_api_key, api_key_header)
+        self._feed_client = GTFSFeedClient(api_key, api_key_header)
         self._data_processor = GTFSDataProcessor(route_delimiter)
         if self._enable_static_fallback and static_gtfs_url:
             self._static_processor = StaticGTFSProcessor(static_gtfs_url)

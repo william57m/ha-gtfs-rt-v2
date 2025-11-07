@@ -1,5 +1,3 @@
-"""Static GTFS schedule data processing module."""
-
 import csv
 import io
 import zipfile
@@ -10,19 +8,13 @@ import aiohttp
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 
-try:
-    from .logger_helper import LoggerHelper
-    from .stop_details import StopDetails
-except ImportError:
-    from logger_helper import LoggerHelper
-    from stop_details import StopDetails
-
+from .logger_helper import LoggerHelper
+from .stop_details import StopDetails
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class StaticGTFSProcessor:
-    """Handles static GTFS schedule data processing."""
 
     def __init__(self, static_gtfs_url: str):
         self._static_gtfs_url = static_gtfs_url
@@ -34,9 +26,8 @@ class StaticGTFSProcessor:
     def get_static_departures(
         self, route_id: str, direction_id: str, stop_id: str
     ) -> List[StopDetails]:
-        """Get static departure times synchronously (fallback for non-async contexts)."""
 
-        # Only return data if it's already loaded, don't block to load it
+        # Only return data if it's already loaded
         if self.has_data():
             return self._get_scheduled_departures(route_id, direction_id, stop_id)
 
@@ -51,7 +42,6 @@ class StaticGTFSProcessor:
     def merge_real_time_and_static(
         self, real_time_services: List[StopDetails], static_services: List[StopDetails]
     ) -> List[StopDetails]:
-        """Merge real-time and static services, avoiding conflicts."""
         if not static_services:
             return real_time_services
 
@@ -97,17 +87,14 @@ class StaticGTFSProcessor:
         return merged_services
 
     def _is_data_fresh(self) -> bool:
-        """Check if cached GTFS data is still fresh."""
         if not self._last_fetch_time or not self._static_data:
             return False
         return datetime.now() - self._last_fetch_time < self._static_data_cache_duration
 
     def has_data(self) -> bool:
-        """Check if GTFS data is available."""
         return bool(self._static_data)
 
     async def load_gtfs_data(self) -> None:
-        """Download and parse GTFS zip file asynchronously."""
         LoggerHelper.log_info(
             [f"Loading GTFS data asynchronously from {self._static_gtfs_url}"],
             logger=_LOGGER,
@@ -147,7 +134,6 @@ class StaticGTFSProcessor:
             raise
 
     def _parse_gtfs_content(self, content: bytes) -> None:
-        """Parse GTFS zip content (CPU-bound work for executor)."""
         with zipfile.ZipFile(io.BytesIO(content)) as zip_file:
             routes = self._parse_csv_from_zip(zip_file, "routes.txt")
             routes_dict = {row["route_id"]: row for row in routes}
@@ -163,7 +149,6 @@ class StaticGTFSProcessor:
             stops = self._parse_csv_from_zip(zip_file, "stops.txt")
             stops_dict = {row["stop_id"]: row for row in stops}
 
-        # Process and organize the data
         self._static_data = {
             "routes": routes_dict,
             "trips": trips_dict,
@@ -176,10 +161,9 @@ class StaticGTFSProcessor:
     def _parse_csv_from_zip(
         self, zip_file: zipfile.ZipFile, filename: str
     ) -> List[Dict[str, str]]:
-        """Parse a CSV file from within the GTFS zip file."""
         try:
             with zip_file.open(filename) as csv_file:
-                content = csv_file.read().decode("utf-8-sig")  # Handle BOM
+                content = csv_file.read().decode("utf-8-sig")
                 reader = csv.DictReader(io.StringIO(content))
                 return list(reader)
         except KeyError:
@@ -191,7 +175,6 @@ class StaticGTFSProcessor:
     def _organize_stop_times(
         self, stop_times: List[Dict[str, str]]
     ) -> Dict[str, List[Dict[str, str]]]:
-        """Organize stop times by trip_id for faster lookup."""
         organized = {}
         for stop_time in stop_times:
             trip_id = stop_time["trip_id"]
@@ -210,6 +193,7 @@ class StaticGTFSProcessor:
     ) -> List[StopDetails]:
 
         LoggerHelper.log_info("_cache_scheduled_departures")
+
         # Find trips for this route and direction today
         today_services = self._get_active_service_ids()
         matching_trips = []
@@ -244,8 +228,6 @@ class StaticGTFSProcessor:
     def _get_scheduled_departures(
         self, route_id: str, direction_id: str, stop_id: str
     ) -> List[StopDetails]:
-        """Get actual scheduled departures from GTFS data."""
-
         if (route_id, direction_id, stop_id) not in self._departures:
             self._cache_scheduled_departures(route_id, direction_id, stop_id)
 
@@ -256,14 +238,12 @@ class StaticGTFSProcessor:
             if departure.arrival_time > current_time:
                 departures.append(departure)
 
-        # Sort by departure time and return next few departures
         departures.sort(key=lambda x: x.arrival_time)
         LoggerHelper.log_info("departures")
         LoggerHelper.log_info(departures)
         return departures[:10]
 
     def _get_active_service_ids(self) -> List[str]:
-        """Get service IDs that are active today."""
         if not self._static_data:
             return []
 

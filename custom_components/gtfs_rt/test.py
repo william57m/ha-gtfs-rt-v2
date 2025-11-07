@@ -8,12 +8,14 @@ See test_translink.yaml for example
 """
 
 import argparse
+import asyncio
 import logging
 import sys
-
 import yaml
+
 from schema import Optional, Schema, SchemaError
-from sensor import (
+
+from .const import (
     CONF_API_KEY,
     CONF_API_KEY_HEADER_NAME,
     CONF_DEPARTURES,
@@ -29,15 +31,13 @@ from sensor import (
     CONF_TRIP_UPDATE_URL,
     CONF_UPDATE_INTERVAL,
     CONF_VEHICLE_POSITION_URL,
-    CONF_X_API_KEY,
     DEFAULT_DIRECTION,
     DEFAULT_ICON,
     DEFAULT_NEXT_BUS_LIMIT,
     DEFAULT_SERVICE,
     DEFAULT_UPDATE_INTERVAL,
-    PublicTransportData,
-    PublicTransportSensor,
 )
+from .sensor import PublicTransportData, PublicTransportSensor
 
 sys.path.append("lib")
 _LOGGER = logging.getLogger(__name__)
@@ -48,7 +48,6 @@ PLATFORM_SCHEMA = Schema(
     {
         CONF_TRIP_UPDATE_URL: str,
         Optional(CONF_API_KEY): str,
-        Optional(CONF_X_API_KEY): str,
         Optional(CONF_API_KEY_HEADER_NAME): str,
         Optional(CONF_VEHICLE_POSITION_URL): str,
         Optional(CONF_ROUTE_DELIMITER): str,
@@ -70,7 +69,7 @@ PLATFORM_SCHEMA = Schema(
 )
 
 
-if __name__ == "__main__":
+async def main():
     parser = argparse.ArgumentParser(description="Test script for ha-gtfs-rt-v2")
     parser.add_argument(
         "-f", "--file", dest="file", help="Config file to use", metavar="FILE"
@@ -110,19 +109,19 @@ if __name__ == "__main__":
             configuration.get(CONF_VEHICLE_POSITION_URL),
             configuration.get(CONF_ROUTE_DELIMITER),
             configuration.get(CONF_API_KEY, None),
-            configuration.get(CONF_X_API_KEY, None),
             configuration.get(CONF_API_KEY_HEADER_NAME, None),
             configuration.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
             configuration.get(CONF_STATIC_GTFS_URL),
             configuration.get(CONF_ENABLE_STATIC_FALLBACK, False),
         )
+        await data.load_gtfs_static_data()
 
         sensors = []
         for departure in configuration[CONF_DEPARTURES]:
             next_bus_limit = departure.get(CONF_NEXT_BUS_LIMIT, DEFAULT_NEXT_BUS_LIMIT)
 
             _LOGGER.info(
-                "Adding Sensors: Name: {}, route id: {}, direction id: {}, next_bus_limit: {}".format(
+                "Adding Sensors: Name: {}, route_id: {}, direction_id: {}, next_bus_limit: {}".format(
                     departure[CONF_NAME],
                     departure[CONF_ROUTE],
                     departure[CONF_STOP_ID],
@@ -141,19 +140,23 @@ if __name__ == "__main__":
 
                 _LOGGER.info(f"Creating sensor {bus_index + 1}: {sensor_name}")
 
-                sensors.append(
-                    PublicTransportSensor(
-                        data,
-                        departure.get(CONF_STOP_ID),
-                        departure.get(CONF_ROUTE),
-                        departure.get(CONF_DIRECTION_ID, DEFAULT_DIRECTION),
-                        departure.get(CONF_ICON, DEFAULT_ICON),
-                        departure.get(CONF_SERVICE_TYPE, DEFAULT_SERVICE),
-                        sensor_name,
-                        bus_index,
-                        departure.get(CONF_NEXT_BUS_LIMIT, DEFAULT_NEXT_BUS_LIMIT),
-                    )
+                sensor = PublicTransportSensor(
+                    data=data,
+                    stop_id=departure.get(CONF_STOP_ID),
+                    route=departure.get(CONF_ROUTE),
+                    direction=departure.get(CONF_DIRECTION_ID, DEFAULT_DIRECTION),
+                    icon=departure.get(CONF_ICON, DEFAULT_ICON),
+                    service_type=departure.get(CONF_SERVICE_TYPE, DEFAULT_SERVICE),
+                    name=sensor_name,
+                    bus_index=bus_index,
+                    next_bus_limit=next_bus_limit,
                 )
+                sensor.update()
+                sensors.append(sensor)
 
     except SchemaError as se:
         logging.info("Input file configuration invalid: {}".format(se))
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
