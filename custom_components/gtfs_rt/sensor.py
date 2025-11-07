@@ -115,7 +115,7 @@ async def async_setup_platform(hass, config, add_entities, discovery_info=None):
     add_entities(sensors)
 
     # Fetch static GTFS data
-    async def handle_load_static(call: ServiceCall):
+    async def handle_load_static(call):
         LoggerHelper.log_info("Service called: loading GTFS static data.")
         try:
             data.load_gtfs_static_data()
