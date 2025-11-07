@@ -23,6 +23,8 @@ except ImportError:
 
 _LOGGER = logging.getLogger(__name__)
 
+DOMAIN = "gtfs_rt"
+
 ATTR_STOP_ID = "Stop ID"
 ATTR_ROUTE = "Route"
 ATTR_DIRECTION_ID = "Direction ID"
@@ -123,7 +125,7 @@ async def async_setup_platform(hass, config, add_entities, discovery_info=None):
         except Exception as e:
             LoggerHelper.log_error("Error loading GTFS data: %s", e)
 
-    hass.services.async_register("sensor", "load_gtfs_static_data", handle_load_static)
+    hass.services.async_register(DOMAIN, "load_gtfs_static_data", handle_load_static)
 
 
 def due_in_minutes(timestamp):
