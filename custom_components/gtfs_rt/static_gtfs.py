@@ -122,13 +122,14 @@ class StaticGTFSProcessor:
                     content = await response.read()
 
             LoggerHelper.log_info(
-                [f"Content {content}"],
+                [f"Content loaded"],
                 logger=_LOGGER,
             )
-            # Parse zip file (CPU-bound work, but relatively fast)
-            # await asyncio.get_event_loop().run_in_executor(
-            #     None, self._parse_gtfs_content, content
-            # )
+            self._parse_gtfs_content(content)
+            LoggerHelper.log_info(
+                [f"Content unzipeped and parsed"],
+                logger=_LOGGER,
+            )
 
             self._last_fetch_time = datetime.now()
             LoggerHelper.log_info(
