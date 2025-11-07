@@ -1,0 +1,3 @@
+load_gtfs_static_data:
+  name: Load static GTFS data
+  description: Downloads and parses the GTFS zip file.
