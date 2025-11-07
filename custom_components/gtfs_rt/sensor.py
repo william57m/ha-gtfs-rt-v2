@@ -489,8 +489,8 @@ class PublicTransportData:
                     )
 
             # Apply static fallback if enabled
-            # if self._enable_static_fallback:
-            #     self._apply_static_fallback(departure_times)
+            if self._enable_static_fallback:
+                self._apply_static_fallback(departure_times)
 
             self._sort_departure_times(departure_times)
             self.info = departure_times
